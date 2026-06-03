@@ -9,9 +9,7 @@ from app.models.fix_action import FixAction
 from app.models.site import Site
 from app.services.fix_governance import (
     HIGH_RISK_PATH_KEYWORDS,
-    RiskAssessment,
     ValidationCheckResult,
-    decide_execution_mode,
     run_sandbox_checks,
 )
 from app.services.github_integration import GitHubIntegration
@@ -83,12 +81,7 @@ async def execute_fix_action(db: AsyncSession, fix_action_id: uuid.UUID) -> dict
     try:
         governance = (fix.fix_content or {}).get("governance", {})
         validation = await _run_sandbox_validation(site, fix)
-        mode = decide_execution_mode(
-            validation_report=validation["report"],
-            risk=_create_risk_assessment_from_governance(governance),
-            autonomous_enabled=True,
-        )
-        if mode == "blocked":
+        if not validation["report"].passed:
             fix.status = "failed"
             fix.execution_result = {
                 "error": "Sandbox validation failed",
@@ -139,17 +132,6 @@ async def execute_fix_action(db: AsyncSession, fix_action_id: uuid.UUID) -> dict
         fix.execution_result = {"error": str(e), "audit": _build_audit_log(fix)}
         await db.commit()
         return {"error": str(e)}
-
-
-def _create_risk_assessment_from_governance(governance: dict):
-    level = governance.get("risk_level", "medium")
-    return RiskAssessment(
-        score=int(governance.get("risk_score", 0) or 0),
-        level=level,
-        reasons=list(governance.get("risk_reasons", [])),
-        requires_human_approval=level == "high",
-    )
-
 
 def _build_audit_log(fix: FixAction) -> dict:
     content = fix.fix_content or {}

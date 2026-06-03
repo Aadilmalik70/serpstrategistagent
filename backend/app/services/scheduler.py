@@ -60,7 +60,7 @@ async def scheduled_agent_run():
                     risk = assess_fix_risk(
                         severity=governance.get("issue_severity", "medium"),
                         target_path=fix.target_path,
-                        changed_files=int(fix_content.get("changed_files", 1) or 1),
+                        changed_files=int(fix_content.get("changed_files") or 1),
                         action_type=fix.action_type,
                     )
                     mode = "auto_execute" if autonomous_enabled and not risk.requires_human_approval else "needs_approval"

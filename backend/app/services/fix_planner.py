@@ -144,7 +144,7 @@ async def generate_fix_plan(
         action_type = "recommendation"
 
     fix_content = fix_data.get("fix_content") or {}
-    changed_files = int(fix_content.get("changed_files", 1) or 1)
+    changed_files = int(fix_content.get("changed_files") or 1)
     risk = assess_fix_risk(
         severity=issue.severity,
         target_path=fix_data.get("target_path"),

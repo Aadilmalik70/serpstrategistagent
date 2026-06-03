@@ -257,7 +257,7 @@ async def approve_and_execute(fix_id: uuid.UUID, db: AsyncSession = Depends(get_
 
     governance = (fix.fix_content or {}).get("governance", {})
     if governance.get("requires_human_approval"):
-        raise HTTPException(status_code=400, detail="Cannot auto-execute. This fix is high/medium risk and requires manual review before execution.")
+        raise HTTPException(status_code=400, detail="Cannot auto-execute. This fix is high risk and requires manual review before execution.")
 
     fix.status = "approved"
     fix.approved_at = datetime.now(timezone.utc)
