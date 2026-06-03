@@ -1,0 +1,15 @@
+{
+  "name": "brainstorming",
+  "source": "obra-superpowers",
+  "description": "You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation.",
+  "description_ja": "Brainstorming",
+  "whenToUse": "Help turn ideas into fully formed designs and specs through natural collaborative dialogue.",
+  "categories": [],
+  "installedAt": "2026-06-02T12:33:55.324Z",
+  "relativePath": "brainstorming",
+  "remotePath": "skills/brainstorming",
+  "installedVia": "packageChild",
+  "packageParentName": "skills",
+  "packageParentRemotePath": "skills",
+  "metadataVersion": 2
+}

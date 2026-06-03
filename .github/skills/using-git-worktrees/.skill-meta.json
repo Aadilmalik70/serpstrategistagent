@@ -1,0 +1,14 @@
+{
+  "name": "using-git-worktrees",
+  "source": "obra-superpowers",
+  "description": "Use when starting feature work that needs isolation from current workspace or before executing implementation plans - ensures an isolated workspace exists via native tools or git worktree fallback",
+  "description_ja": "Using Git Worktrees",
+  "categories": [],
+  "installedAt": "2026-06-02T12:34:47.257Z",
+  "relativePath": "using-git-worktrees",
+  "remotePath": "skills/using-git-worktrees",
+  "installedVia": "packageChild",
+  "packageParentName": "skills",
+  "packageParentRemotePath": "skills",
+  "metadataVersion": 2
+}

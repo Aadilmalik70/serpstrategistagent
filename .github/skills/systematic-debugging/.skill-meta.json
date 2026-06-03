@@ -1,0 +1,15 @@
+{
+  "name": "systematic-debugging",
+  "source": "obra-superpowers",
+  "description": "Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes",
+  "description_ja": "Systematic Debugging",
+  "whenToUse": "Use for ANY technical issue:; Test failures; Bugs in production; Unexpected behavior; Performance problems; Build failures; Integration issues; Under time pressure (emergencies make guessing tempting)",
+  "categories": [],
+  "installedAt": "2026-06-02T12:34:41.048Z",
+  "relativePath": "systematic-debugging",
+  "remotePath": "skills/systematic-debugging",
+  "installedVia": "packageChild",
+  "packageParentName": "skills",
+  "packageParentRemotePath": "skills",
+  "metadataVersion": 2
+}

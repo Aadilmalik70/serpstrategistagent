@@ -1,0 +1,14 @@
+{
+  "name": "verification-before-completion",
+  "source": "obra-superpowers",
+  "description": "Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence...",
+  "description_ja": "Verification Before Completion",
+  "categories": [],
+  "installedAt": "2026-06-02T12:34:57.521Z",
+  "relativePath": "verification-before-completion",
+  "remotePath": "skills/verification-before-completion",
+  "installedVia": "packageChild",
+  "packageParentName": "skills",
+  "packageParentRemotePath": "skills",
+  "metadataVersion": 2
+}

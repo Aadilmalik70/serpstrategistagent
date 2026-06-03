@@ -1,0 +1,14 @@
+{
+  "name": "writing-plans",
+  "source": "obra-superpowers",
+  "description": "Use when you have a spec or requirements for a multi-step task, before touching code",
+  "description_ja": "Writing Plans",
+  "categories": [],
+  "installedAt": "2026-06-02T12:35:02.711Z",
+  "relativePath": "writing-plans",
+  "remotePath": "skills/writing-plans",
+  "installedVia": "packageChild",
+  "packageParentName": "skills",
+  "packageParentRemotePath": "skills",
+  "metadataVersion": 2
+}

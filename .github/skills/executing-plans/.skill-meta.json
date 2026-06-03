@@ -1,0 +1,14 @@
+{
+  "name": "executing-plans",
+  "source": "obra-superpowers",
+  "description": "Use when you have a written implementation plan to execute in a separate session with review checkpoints",
+  "description_ja": "Executing Plans",
+  "categories": [],
+  "installedAt": "2026-06-02T12:34:07.228Z",
+  "relativePath": "executing-plans",
+  "remotePath": "skills/executing-plans",
+  "installedVia": "packageChild",
+  "packageParentName": "skills",
+  "packageParentRemotePath": "skills",
+  "metadataVersion": 2
+}

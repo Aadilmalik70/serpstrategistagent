@@ -1,0 +1,15 @@
+{
+  "name": "test-driven-development",
+  "source": "obra-superpowers",
+  "description": "Use when implementing any feature or bugfix, before writing implementation code",
+  "description_ja": "Test-driven development (TDD)",
+  "whenToUse": "**Always:**; New features; Bug fixes; Refactoring; Behavior changes; Throwaway prototypes; Generated code; Configuration files",
+  "categories": [],
+  "installedAt": "2026-06-02T12:34:42.246Z",
+  "relativePath": "test-driven-development",
+  "remotePath": "skills/test-driven-development",
+  "installedVia": "packageChild",
+  "packageParentName": "skills",
+  "packageParentRemotePath": "skills",
+  "metadataVersion": 2
+}

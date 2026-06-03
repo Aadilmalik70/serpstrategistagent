@@ -1,0 +1,15 @@
+{
+  "name": "requesting-code-review",
+  "source": "obra-superpowers",
+  "description": "Use when completing tasks, implementing major features, or before merging to verify work meets requirements",
+  "description_ja": "Requesting Code Review",
+  "whenToUse": "Dispatch a code reviewer subagent to catch issues before they cascade. The reviewer gets precisely crafted context for evaluation — never your session's history. This keeps the reviewer focused on ...",
+  "categories": [],
+  "installedAt": "2026-06-02T12:34:27.916Z",
+  "relativePath": "requesting-code-review",
+  "remotePath": "skills/requesting-code-review",
+  "installedVia": "packageChild",
+  "packageParentName": "skills",
+  "packageParentRemotePath": "skills",
+  "metadataVersion": 2
+}

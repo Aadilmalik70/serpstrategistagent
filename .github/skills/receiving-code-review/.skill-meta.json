@@ -1,0 +1,14 @@
+{
+  "name": "receiving-code-review",
+  "source": "obra-superpowers",
+  "description": "Use when receiving code review feedback, before implementing suggestions, especially if feedback seems unclear or technically questionable - requires technical rigor and verification, not performative...",
+  "description_ja": "Receiving Code Review",
+  "categories": [],
+  "installedAt": "2026-06-02T12:34:19.234Z",
+  "relativePath": "receiving-code-review",
+  "remotePath": "skills/receiving-code-review",
+  "installedVia": "packageChild",
+  "packageParentName": "skills",
+  "packageParentRemotePath": "skills",
+  "metadataVersion": 2
+}

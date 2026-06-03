@@ -1,0 +1,15 @@
+{
+  "name": "dispatching-parallel-agents",
+  "source": "obra-superpowers",
+  "description": "Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies",
+  "description_ja": "Dispatching Parallel Agents",
+  "whenToUse": "```dot; 3+ test files failing with different root causes; Multiple subsystems broken independently; Each problem can be understood without context from others; No shared state between investigations",
+  "categories": [],
+  "installedAt": "2026-06-02T12:34:03.534Z",
+  "relativePath": "dispatching-parallel-agents",
+  "remotePath": "skills/dispatching-parallel-agents",
+  "installedVia": "packageChild",
+  "packageParentName": "skills",
+  "packageParentRemotePath": "skills",
+  "metadataVersion": 2
+}

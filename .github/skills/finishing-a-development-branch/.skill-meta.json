@@ -1,0 +1,14 @@
+{
+  "name": "finishing-a-development-branch",
+  "source": "obra-superpowers",
+  "description": "Use when implementation is complete, all tests pass, and you need to decide how to integrate the work - guides completion of development work by presenting structured options for merge, PR, or cleanup",
+  "description_ja": "Finishing A Development Branch",
+  "categories": [],
+  "installedAt": "2026-06-02T12:34:12.765Z",
+  "relativePath": "finishing-a-development-branch",
+  "remotePath": "skills/finishing-a-development-branch",
+  "installedVia": "packageChild",
+  "packageParentName": "skills",
+  "packageParentRemotePath": "skills",
+  "metadataVersion": 2
+}

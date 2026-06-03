@@ -1,0 +1,15 @@
+{
+  "name": "writing-skills",
+  "source": "obra-superpowers",
+  "description": "Use when creating new skills, editing existing skills, or verifying skills work before deployment",
+  "description_ja": "Writing Skills",
+  "whenToUse": "[Small inline flowchart IF decision non-obvious]",
+  "categories": [],
+  "installedAt": "2026-06-02T12:35:15.927Z",
+  "relativePath": "writing-skills",
+  "remotePath": "skills/writing-skills",
+  "installedVia": "packageChild",
+  "packageParentName": "skills",
+  "packageParentRemotePath": "skills",
+  "metadataVersion": 2
+}

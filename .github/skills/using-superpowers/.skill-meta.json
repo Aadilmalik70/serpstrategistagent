@@ -1,0 +1,14 @@
+{
+  "name": "using-superpowers",
+  "source": "obra-superpowers",
+  "description": "Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions",
+  "description_ja": "Using Superpowers",
+  "categories": [],
+  "installedAt": "2026-06-02T12:34:52.712Z",
+  "relativePath": "using-superpowers",
+  "remotePath": "skills/using-superpowers",
+  "installedVia": "packageChild",
+  "packageParentName": "skills",
+  "packageParentRemotePath": "skills",
+  "metadataVersion": 2
+}
