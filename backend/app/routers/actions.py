@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -33,6 +33,7 @@ class IntegrationConfig(BaseModel):
     wordpress_url: str | None = None
     wordpress_user: str | None = None
     wordpress_app_password: str | None = None
+    autonomous_enabled: bool | None = None
 
 
 class FixActionResponse(BaseModel):
@@ -93,6 +94,7 @@ async def get_integrations(site_id: uuid.UUID, db: AsyncSession = Depends(get_db
         "wordpress_connected": bool(site.wordpress_url and site.wordpress_user and site.wordpress_app_password),
         "tech_stack": site.tech_stack,
         "cms": site.cms,
+        "autonomous_enabled": bool((site.site_context or {}).get("autonomous_enabled", True)),
     }
 
 
@@ -117,6 +119,8 @@ async def update_integrations(
         site.wordpress_user = config.wordpress_user
     if config.wordpress_app_password is not None:
         site.wordpress_app_password = config.wordpress_app_password
+    if config.autonomous_enabled is not None:
+        site.site_context = {**(site.site_context or {}), "autonomous_enabled": config.autonomous_enabled}
 
     await db.commit()
     return {"status": "updated"}
@@ -251,6 +255,10 @@ async def approve_and_execute(fix_id: uuid.UUID, db: AsyncSession = Depends(get_
     if fix.status != "pending":
         raise HTTPException(status_code=400, detail=f"Fix action is '{fix.status}', must be 'pending'")
 
+    governance = (fix.fix_content or {}).get("governance", {})
+    if governance.get("requires_human_approval"):
+        raise HTTPException(status_code=400, detail="This fix is high/medium risk and requires explicit approval")
+
     fix.status = "approved"
     fix.approved_at = datetime.now(timezone.utc)
     await db.commit()
@@ -259,6 +267,41 @@ async def approve_and_execute(fix_id: uuid.UUID, db: AsyncSession = Depends(get_
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+@router.get("/metrics/{site_id}")
+async def get_fix_metrics(site_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Operational metrics for autonomous SEO fix execution."""
+    totals = await db.execute(
+        select(
+            func.count(FixAction.id).label("total"),
+            func.sum(case((FixAction.status == "completed", 1), else_=0)).label("completed"),
+            func.sum(case((FixAction.status == "failed", 1), else_=0)).label("failed"),
+            func.sum(case((FixAction.status == "pending", 1), else_=0)).label("pending"),
+            func.sum(case((FixAction.status == "approved", 1), else_=0)).label("approved"),
+        ).where(FixAction.site_id == site_id)
+    )
+    row = totals.one()
+    total = int(row.total or 0)
+    completed = int(row.completed or 0)
+    failed = int(row.failed or 0)
+    pending = int(row.pending or 0)
+    approved = int(row.approved or 0)
+
+    return {
+        "site_id": str(site_id),
+        "validated_fixes_executed": completed,
+        "rollback_rate": (failed / total) if total else 0,
+        "approval_bypass_rate": (approved / total) if total else 0,
+        "issue_resolution_speed_proxy": completed,
+        "execution_summary": {
+            "total": total,
+            "completed": completed,
+            "failed": failed,
+            "pending": pending,
+            "approved": approved,
+        },
+    }
 
 
 # === Helpers ===

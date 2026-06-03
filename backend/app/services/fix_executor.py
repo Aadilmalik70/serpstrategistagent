@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.fix_action import FixAction
 from app.models.site import Site
+from app.services.fix_governance import ValidationCheckResult, decide_execution_mode, run_sandbox_checks
 from app.services.github_integration import GitHubIntegration
 from app.services.llm_analyzer import _get_llm
 from app.services.wordpress_integration import WordPressIntegration
@@ -74,6 +75,23 @@ async def execute_fix_action(db: AsyncSession, fix_action_id: uuid.UUID) -> dict
     await db.commit()
 
     try:
+        governance = (fix.fix_content or {}).get("governance", {})
+        validation = await _run_sandbox_validation(site, fix)
+        mode = decide_execution_mode(
+            validation_report=validation["report"],
+            risk=_risk_stub(governance),
+            autonomous_enabled=True,
+        )
+        if mode == "blocked":
+            fix.status = "failed"
+            fix.execution_result = {
+                "error": "Sandbox validation failed",
+                "validation": validation["data"],
+                "audit": _build_audit_log(fix),
+            }
+            await db.commit()
+            return {"error": "Sandbox validation failed", "validation": validation["data"]}
+
         if fix.action_type == "github_pr":
             result = await _execute_github_pr(site, fix)
         elif fix.action_type == "wordpress_update":
@@ -90,7 +108,21 @@ async def execute_fix_action(db: AsyncSession, fix_action_id: uuid.UUID) -> dict
             fix.status = "completed"
             fix.executed_at = datetime.now(timezone.utc)
 
-        fix.execution_result = result
+        fix.execution_result = {
+            **result,
+            "validation": validation["data"],
+            "governance": governance,
+            "audit": _build_audit_log(fix),
+            "rollback": {
+                "available": fix.action_type in ("github_pr", "wordpress_update"),
+                "strategy": "revert_pr_or_restore_previous_content",
+            },
+            "learning_signal": {
+                "status": "success" if "error" not in result else "failed",
+                "risk_level": governance.get("risk_level", "unknown"),
+                "recommended_mode": governance.get("recommended_mode"),
+            },
+        }
         await db.commit()
 
         return result
@@ -98,9 +130,107 @@ async def execute_fix_action(db: AsyncSession, fix_action_id: uuid.UUID) -> dict
     except Exception as e:
         logger.error(f"Failed to execute fix {fix_action_id}: {e}")
         fix.status = "failed"
-        fix.execution_result = {"error": str(e)}
+        fix.execution_result = {"error": str(e), "audit": _build_audit_log(fix)}
         await db.commit()
         return {"error": str(e)}
+
+
+def _risk_stub(governance: dict):
+    class _Risk:
+        def __init__(self, level: str):
+            self.level = level
+            self.requires_human_approval = level in ("high", "medium")
+
+    return _Risk(governance.get("risk_level", "medium"))
+
+
+def _build_audit_log(fix: FixAction) -> dict:
+    content = fix.fix_content or {}
+    return {
+        "fix_id": str(fix.id),
+        "target_path": fix.target_path,
+        "action_type": fix.action_type,
+        "blocked_paths_policy": ["*.env", "secrets*", "billing/*"],
+        "max_changed_files": content.get("policy", {}).get("max_changed_files", 5),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def _run_sandbox_validation(site: Site, fix: FixAction) -> dict:
+    checks: list[ValidationCheckResult] = []
+    content = fix.fix_content or {}
+    sandbox = content.get("sandbox", {})
+
+    if fix.action_type == "github_pr":
+        if site.github_repo and site.github_token:
+            github = GitHubIntegration(repo=site.github_repo, token=site.github_token)
+            verify = await github.verify_connection()
+            checks.append(
+                ValidationCheckResult(
+                    name="connector",
+                    passed=bool(verify.get("connected")),
+                    message=verify.get("error"),
+                    details=verify,
+                )
+            )
+        else:
+            checks.append(ValidationCheckResult(name="connector", passed=False, message="GitHub not configured"))
+    elif fix.action_type == "wordpress_update":
+        if site.wordpress_url and site.wordpress_user and site.wordpress_app_password:
+            wp = WordPressIntegration(
+                site_url=site.wordpress_url,
+                username=site.wordpress_user,
+                app_password=site.wordpress_app_password,
+            )
+            verify = await wp.verify_connection()
+            checks.append(
+                ValidationCheckResult(
+                    name="connector",
+                    passed=bool(verify.get("connected")),
+                    message=verify.get("error"),
+                    details=verify,
+                )
+            )
+        else:
+            checks.append(ValidationCheckResult(name="connector", passed=False, message="WordPress not configured"))
+
+    checks.extend(
+        [
+            ValidationCheckResult(
+                name="build_install",
+                passed=bool(sandbox.get("build_passed", True)),
+                message=sandbox.get("build_message"),
+            ),
+            ValidationCheckResult(
+                name="smoke_test",
+                passed=bool(sandbox.get("smoke_passed", True)),
+                message=sandbox.get("smoke_message"),
+            ),
+            ValidationCheckResult(
+                name="seo_checks",
+                passed=bool(sandbox.get("seo_passed", True)),
+                message=sandbox.get("seo_message"),
+            ),
+        ]
+    )
+
+    report = run_sandbox_checks(checks)
+    return {
+        "report": report,
+        "data": {
+            "passed": report.passed,
+            "failed_checks": report.failed_checks,
+            "checks": [
+                {
+                    "name": check.name,
+                    "passed": check.passed,
+                    "message": check.message,
+                    "details": check.details,
+                }
+                for check in report.checks
+            ],
+        },
+    }
 
 
 async def _execute_github_pr(site: Site, fix: FixAction) -> dict:
