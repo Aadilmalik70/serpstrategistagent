@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.issue import Issue
 from app.models.site import Site
 from app.models.fix_action import FixAction
-from app.services.fix_governance import assess_fix_risk
+from app.services.fix_governance import (
+    ValidationCheckResult,
+    assess_fix_risk,
+    decide_execution_mode,
+    run_sandbox_checks,
+)
 from app.services.llm_analyzer import _get_llm
 
 logger = logging.getLogger(__name__)
@@ -152,7 +157,23 @@ async def generate_fix_plan(
         action_type=action_type,
     )
     autonomous_enabled = bool((site.site_context or {}).get("autonomous_enabled", False))
-    execution_mode = "auto_execute" if autonomous_enabled and not risk.requires_human_approval else "needs_approval"
+    planning_gate = run_sandbox_checks([ValidationCheckResult(name="planning_gate", passed=True)])
+    execution_mode = decide_execution_mode(
+        validation_report=planning_gate,
+        risk=risk,
+        autonomous_enabled=autonomous_enabled,
+    )
+    fix_content.setdefault(
+        "sandbox",
+        {
+            "build_passed": False,
+            "smoke_passed": False,
+            "seo_passed": False,
+            "build_message": "Sandbox build check required before execution",
+            "smoke_message": "Sandbox smoke test required before execution",
+            "seo_message": "Sandbox SEO checks required before execution",
+        },
+    )
     fix_content["governance"] = {
         "issue_severity": issue.severity,
         "risk_level": risk.level,

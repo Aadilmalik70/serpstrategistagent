@@ -12,7 +12,7 @@ from app.models.site import Site
 from app.models.agent_run import AgentRun
 from app.services.agent_graph import run_agent_graph
 from app.services.fix_executor import execute_fix_action
-from app.services.fix_governance import assess_fix_risk
+from app.services.fix_governance import RiskAssessment, ValidationCheckResult, decide_execution_mode, run_sandbox_checks
 from app.services.fix_planner import generate_bulk_fix_plans
 
 logger = logging.getLogger(__name__)
@@ -57,13 +57,18 @@ async def scheduled_agent_run():
                 for fix in fixes:
                     fix_content = fix.fix_content or {}
                     governance = fix_content.get("governance") or {}
-                    risk = assess_fix_risk(
-                        severity=governance.get("issue_severity", "medium"),
-                        target_path=fix.target_path,
-                        changed_files=int(fix_content.get("changed_files") or 1),
-                        action_type=fix.action_type,
+                    risk = RiskAssessment(
+                        score=int(governance.get("risk_score") or 0),
+                        level=governance.get("risk_level", "medium"),
+                        reasons=list(governance.get("risk_reasons", [])),
+                        requires_human_approval=bool(governance.get("requires_human_approval", True)),
                     )
-                    mode = "auto_execute" if autonomous_enabled and not risk.requires_human_approval else "needs_approval"
+                    scheduler_gate = run_sandbox_checks([ValidationCheckResult(name="scheduler_gate", passed=True)])
+                    mode = decide_execution_mode(
+                        validation_report=scheduler_gate,
+                        risk=risk,
+                        autonomous_enabled=autonomous_enabled,
+                    )
                     if mode == "auto_execute":
                         fix.status = "approved"
                         fix.approved_at = datetime.now(timezone.utc)

@@ -79,13 +79,14 @@ async def execute_fix_action(db: AsyncSession, fix_action_id: uuid.UUID) -> dict
     await db.commit()
 
     try:
-        governance = (fix.fix_content or {}).get("governance", {})
+        governance_metadata = (fix.fix_content or {}).get("governance", {})
         validation = await _run_sandbox_validation(site, fix)
         if not validation["report"].passed:
             fix.status = "failed"
             fix.execution_result = {
                 "error": "Sandbox validation failed",
                 "validation": validation["data"],
+                "governance": governance_metadata,
                 "audit": _build_audit_log(fix),
             }
             await db.commit()
@@ -110,7 +111,7 @@ async def execute_fix_action(db: AsyncSession, fix_action_id: uuid.UUID) -> dict
         fix.execution_result = {
             **result,
             "validation": validation["data"],
-            "governance": governance,
+            "governance": governance_metadata,
             "audit": _build_audit_log(fix),
             "rollback": {
                 "available": fix.action_type in ("github_pr", "wordpress_update"),
@@ -118,8 +119,8 @@ async def execute_fix_action(db: AsyncSession, fix_action_id: uuid.UUID) -> dict
             },
             "learning_signal": {
                 "status": "success" if "error" not in result else "failed",
-                "risk_level": governance.get("risk_level", "unknown"),
-                "recommended_mode": governance.get("recommended_mode"),
+                "risk_level": governance_metadata.get("risk_level", "unknown"),
+                "recommended_mode": governance_metadata.get("recommended_mode"),
             },
         }
         await db.commit()
@@ -187,17 +188,17 @@ async def _run_sandbox_validation(site: Site, fix: FixAction) -> dict:
         [
             ValidationCheckResult(
                 name="build_install",
-                passed=bool(sandbox.get("build_passed", True)),
+                passed=bool(sandbox.get("build_passed", False)),
                 message=sandbox.get("build_message"),
             ),
             ValidationCheckResult(
                 name="smoke_test",
-                passed=bool(sandbox.get("smoke_passed", True)),
+                passed=bool(sandbox.get("smoke_passed", False)),
                 message=sandbox.get("smoke_message"),
             ),
             ValidationCheckResult(
                 name="seo_checks",
-                passed=bool(sandbox.get("seo_passed", True)),
+                passed=bool(sandbox.get("seo_passed", False)),
                 message=sandbox.get("seo_message"),
             ),
         ]
