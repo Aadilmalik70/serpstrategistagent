@@ -12,7 +12,7 @@ from app.models.site import Site
 from app.models.agent_run import AgentRun
 from app.services.agent_graph import run_agent_graph
 from app.services.fix_executor import execute_fix_action
-from app.services.fix_governance import decide_execution_mode, run_sandbox_checks, assess_fix_risk
+from app.services.fix_governance import assess_fix_risk
 from app.services.fix_planner import generate_bulk_fix_plans
 
 logger = logging.getLogger(__name__)
@@ -63,8 +63,7 @@ async def scheduled_agent_run():
                         changed_files=int(fix_content.get("changed_files", 1) or 1),
                         action_type=fix.action_type,
                     )
-                    validation = run_sandbox_checks([])
-                    mode = decide_execution_mode(validation, risk, autonomous_enabled=autonomous_enabled)
+                    mode = "auto_execute" if autonomous_enabled and not risk.requires_human_approval else "needs_approval"
                     if mode == "auto_execute":
                         fix.status = "approved"
                         fix.approved_at = datetime.now(timezone.utc)

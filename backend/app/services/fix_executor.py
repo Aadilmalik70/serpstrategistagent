@@ -7,7 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.fix_action import FixAction
 from app.models.site import Site
-from app.services.fix_governance import ValidationCheckResult, decide_execution_mode, run_sandbox_checks
+from app.services.fix_governance import (
+    HIGH_RISK_PATH_KEYWORDS,
+    RiskAssessment,
+    ValidationCheckResult,
+    decide_execution_mode,
+    run_sandbox_checks,
+)
 from app.services.github_integration import GitHubIntegration
 from app.services.llm_analyzer import _get_llm
 from app.services.wordpress_integration import WordPressIntegration
@@ -136,12 +142,13 @@ async def execute_fix_action(db: AsyncSession, fix_action_id: uuid.UUID) -> dict
 
 
 def _create_risk_assessment_from_governance(governance: dict):
-    class _Risk:
-        def __init__(self, level: str):
-            self.level = level
-            self.requires_human_approval = level in ("high", "medium")
-
-    return _Risk(governance.get("risk_level", "medium"))
+    level = governance.get("risk_level", "medium")
+    return RiskAssessment(
+        score=int(governance.get("risk_score", 0) or 0),
+        level=level,
+        reasons=list(governance.get("risk_reasons", [])),
+        requires_human_approval=level == "high",
+    )
 
 
 def _build_audit_log(fix: FixAction) -> dict:
@@ -150,7 +157,7 @@ def _build_audit_log(fix: FixAction) -> dict:
         "fix_id": str(fix.id),
         "target_path": fix.target_path,
         "action_type": fix.action_type,
-        "blocked_paths_policy": ["*.env", "secrets*", "billing/*"],
+        "blocked_paths_policy": list(HIGH_RISK_PATH_KEYWORDS),
         "max_changed_files": content.get("policy", {}).get("max_changed_files", 5),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }

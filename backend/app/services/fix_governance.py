@@ -2,7 +2,7 @@
 from dataclasses import dataclass, field
 
 
-SENSITIVE_PATH_HINTS = ("auth", "secret", "config", ".env", "payment", "billing")
+HIGH_RISK_PATH_KEYWORDS = ("auth", "secret", "config", ".env", "payment", "billing")
 
 
 @dataclass
@@ -62,7 +62,7 @@ def assess_fix_risk(
         reasons.append("multi_file_change")
 
     path = (target_path or "").lower()
-    if any(hint in path for hint in SENSITIVE_PATH_HINTS):
+    if any(hint in path for hint in HIGH_RISK_PATH_KEYWORDS):
         score += 4
         reasons.append("sensitive_path")
 
@@ -81,7 +81,7 @@ def assess_fix_risk(
         score=score,
         level=level,
         reasons=reasons,
-        requires_human_approval=level in ("high", "medium"),
+        requires_human_approval=level == "high",
     )
 
 
