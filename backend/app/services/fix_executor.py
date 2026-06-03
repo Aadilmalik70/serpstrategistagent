@@ -79,7 +79,7 @@ async def execute_fix_action(db: AsyncSession, fix_action_id: uuid.UUID) -> dict
         validation = await _run_sandbox_validation(site, fix)
         mode = decide_execution_mode(
             validation_report=validation["report"],
-            risk=_risk_stub(governance),
+            risk=_create_risk_assessment_from_governance(governance),
             autonomous_enabled=True,
         )
         if mode == "blocked":
@@ -135,7 +135,7 @@ async def execute_fix_action(db: AsyncSession, fix_action_id: uuid.UUID) -> dict
         return {"error": str(e)}
 
 
-def _risk_stub(governance: dict):
+def _create_risk_assessment_from_governance(governance: dict):
     class _Risk:
         def __init__(self, level: str):
             self.level = level

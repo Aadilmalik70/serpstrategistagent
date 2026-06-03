@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, func, case
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -94,7 +94,7 @@ async def get_integrations(site_id: uuid.UUID, db: AsyncSession = Depends(get_db
         "wordpress_connected": bool(site.wordpress_url and site.wordpress_user and site.wordpress_app_password),
         "tech_stack": site.tech_stack,
         "cms": site.cms,
-        "autonomous_enabled": bool((site.site_context or {}).get("autonomous_enabled", True)),
+        "autonomous_enabled": bool((site.site_context or {}).get("autonomous_enabled", False)),
     }
 
 
@@ -257,7 +257,7 @@ async def approve_and_execute(fix_id: uuid.UUID, db: AsyncSession = Depends(get_
 
     governance = (fix.fix_content or {}).get("governance", {})
     if governance.get("requires_human_approval"):
-        raise HTTPException(status_code=400, detail="This fix is high/medium risk and requires explicit approval")
+        raise HTTPException(status_code=400, detail="Cannot auto-execute: this fix is high/medium risk and requires manual review before execution")
 
     fix.status = "approved"
     fix.approved_at = datetime.now(timezone.utc)
@@ -272,27 +272,25 @@ async def approve_and_execute(fix_id: uuid.UUID, db: AsyncSession = Depends(get_
 @router.get("/metrics/{site_id}")
 async def get_fix_metrics(site_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     """Operational metrics for autonomous SEO fix execution."""
-    totals = await db.execute(
-        select(
-            func.count(FixAction.id).label("total"),
-            func.sum(case((FixAction.status == "completed", 1), else_=0)).label("completed"),
-            func.sum(case((FixAction.status == "failed", 1), else_=0)).label("failed"),
-            func.sum(case((FixAction.status == "pending", 1), else_=0)).label("pending"),
-            func.sum(case((FixAction.status == "approved", 1), else_=0)).label("approved"),
-        ).where(FixAction.site_id == site_id)
+    result = await db.execute(select(FixAction).where(FixAction.site_id == site_id))
+    fixes = list(result.scalars().all())
+
+    total = len(fixes)
+    completed = sum(1 for fix in fixes if fix.status == "completed")
+    failed = sum(1 for fix in fixes if fix.status == "failed")
+    pending = sum(1 for fix in fixes if fix.status == "pending")
+    approved = sum(1 for fix in fixes if fix.status == "approved")
+    auto_executed = sum(
+        1
+        for fix in fixes
+        if (fix.execution_result or {}).get("governance", {}).get("recommended_mode") == "auto_execute"
     )
-    row = totals.one()
-    total = int(row.total or 0)
-    completed = int(row.completed or 0)
-    failed = int(row.failed or 0)
-    pending = int(row.pending or 0)
-    approved = int(row.approved or 0)
 
     return {
         "site_id": str(site_id),
         "validated_fixes_executed": completed,
-        "rollback_rate": (failed / total) if total else 0,
-        "approval_bypass_rate": (approved / total) if total else 0,
+        "failure_rate": (failed / total) if total else 0,
+        "approval_bypass_rate": (auto_executed / total) if total else 0,
         "issue_resolution_speed_proxy": completed,
         "execution_summary": {
             "total": total,

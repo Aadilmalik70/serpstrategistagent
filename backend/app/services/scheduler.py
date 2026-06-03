@@ -12,7 +12,7 @@ from app.models.site import Site
 from app.models.agent_run import AgentRun
 from app.services.agent_graph import run_agent_graph
 from app.services.fix_executor import execute_fix_action
-from app.services.fix_governance import decide_execution_mode, run_sandbox_checks, ValidationCheckResult, assess_fix_risk
+from app.services.fix_governance import decide_execution_mode, run_sandbox_checks, assess_fix_risk
 from app.services.fix_planner import generate_bulk_fix_plans
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ async def scheduled_agent_run():
             await run_agent_graph(site.id, run_id)
             async with async_session_factory() as db:
                 fixes = await generate_bulk_fix_plans(db, site.id, max_issues=5)
-                autonomous_enabled = bool((site.site_context or {}).get("autonomous_enabled", True))
+                autonomous_enabled = bool((site.site_context or {}).get("autonomous_enabled", False))
 
                 for fix in fixes:
                     fix_content = fix.fix_content or {}
@@ -63,13 +63,7 @@ async def scheduled_agent_run():
                         changed_files=int(fix_content.get("changed_files", 1) or 1),
                         action_type=fix.action_type,
                     )
-                    validation = run_sandbox_checks(
-                        [
-                            ValidationCheckResult(name="build_install", passed=True),
-                            ValidationCheckResult(name="smoke_test", passed=True),
-                            ValidationCheckResult(name="seo_checks", passed=True),
-                        ]
-                    )
+                    validation = run_sandbox_checks([])
                     mode = decide_execution_mode(validation, risk, autonomous_enabled=autonomous_enabled)
                     if mode == "auto_execute":
                         fix.status = "approved"
