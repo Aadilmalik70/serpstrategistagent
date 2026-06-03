@@ -12,7 +12,7 @@ from app.models.site import Site
 from app.models.agent_run import AgentRun
 from app.services.agent_graph import run_agent_graph
 from app.services.fix_executor import execute_fix_action
-from app.services.fix_governance import RiskAssessment, ValidationCheckResult, decide_execution_mode, run_sandbox_checks
+from app.services.fix_governance import RiskAssessment
 from app.services.fix_planner import generate_bulk_fix_plans
 
 logger = logging.getLogger(__name__)
@@ -63,12 +63,7 @@ async def scheduled_agent_run():
                         reasons=list(governance.get("risk_reasons", [])),
                         requires_human_approval=bool(governance.get("requires_human_approval", True)),
                     )
-                    scheduler_gate = run_sandbox_checks([ValidationCheckResult(name="scheduler_gate", passed=True)])
-                    mode = decide_execution_mode(
-                        validation_report=scheduler_gate,
-                        risk=risk,
-                        autonomous_enabled=autonomous_enabled,
-                    )
+                    mode = "auto_execute" if autonomous_enabled and not risk.requires_human_approval else "needs_approval"
                     if mode == "auto_execute":
                         fix.status = "approved"
                         fix.approved_at = datetime.now(timezone.utc)
