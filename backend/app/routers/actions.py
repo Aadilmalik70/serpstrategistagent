@@ -33,6 +33,7 @@ class IntegrationConfig(BaseModel):
     wordpress_url: str | None = None
     wordpress_user: str | None = None
     wordpress_app_password: str | None = None
+    autonomous_enabled: bool | None = None
 
 
 class FixActionResponse(BaseModel):
@@ -93,6 +94,7 @@ async def get_integrations(site_id: uuid.UUID, db: AsyncSession = Depends(get_db
         "wordpress_connected": bool(site.wordpress_url and site.wordpress_user and site.wordpress_app_password),
         "tech_stack": site.tech_stack,
         "cms": site.cms,
+        "autonomous_enabled": bool((site.site_context or {}).get("autonomous_enabled", False)),
     }
 
 
@@ -117,6 +119,8 @@ async def update_integrations(
         site.wordpress_user = config.wordpress_user
     if config.wordpress_app_password is not None:
         site.wordpress_app_password = config.wordpress_app_password
+    if config.autonomous_enabled is not None:
+        site.site_context = {**(site.site_context or {}), "autonomous_enabled": config.autonomous_enabled}
 
     await db.commit()
     return {"status": "updated"}
@@ -251,6 +255,10 @@ async def approve_and_execute(fix_id: uuid.UUID, db: AsyncSession = Depends(get_
     if fix.status != "pending":
         raise HTTPException(status_code=400, detail=f"Fix action is '{fix.status}', must be 'pending'")
 
+    governance = (fix.fix_content or {}).get("governance", {})
+    if governance.get("requires_human_approval"):
+        raise HTTPException(status_code=400, detail="Cannot auto-execute. This fix is high risk and requires manual review before execution.")
+
     fix.status = "approved"
     fix.approved_at = datetime.now(timezone.utc)
     await db.commit()
@@ -259,6 +267,39 @@ async def approve_and_execute(fix_id: uuid.UUID, db: AsyncSession = Depends(get_
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+@router.get("/metrics/{site_id}")
+async def get_fix_metrics(site_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Operational metrics for autonomous SEO fix execution."""
+    result = await db.execute(select(FixAction).where(FixAction.site_id == site_id))
+    fixes = list(result.scalars().all())
+
+    total = len(fixes)
+    completed = sum(1 for fix in fixes if fix.status == "completed")
+    failed = sum(1 for fix in fixes if fix.status == "failed")
+    pending = sum(1 for fix in fixes if fix.status == "pending")
+    approved = sum(1 for fix in fixes if fix.status == "approved")
+    auto_executed = sum(
+        1
+        for fix in fixes
+        if (fix.execution_result or {}).get("governance", {}).get("recommended_mode") == "auto_execute"
+    )
+
+    return {
+        "site_id": str(site_id),
+        "validated_fixes_executed": completed,
+        "failure_rate": (failed / total) if total else 0,
+        "approval_bypass_rate": (auto_executed / total) if total else 0,
+        "issue_resolution_speed_proxy": completed,
+        "execution_summary": {
+            "total": total,
+            "completed": completed,
+            "failed": failed,
+            "pending": pending,
+            "approved": approved,
+        },
+    }
 
 
 # === Helpers ===

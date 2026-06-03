@@ -11,6 +11,9 @@ from app.database import async_session_factory
 from app.models.site import Site
 from app.models.agent_run import AgentRun
 from app.services.agent_graph import run_agent_graph
+from app.services.fix_executor import execute_fix_action
+from app.services.fix_governance import RiskAssessment
+from app.services.fix_planner import generate_bulk_fix_plans
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,27 @@ async def scheduled_agent_run():
 
             logger.info(f"Scheduler: Running agent for {site.domain} (run {run_id})")
             await run_agent_graph(site.id, run_id)
-            logger.info(f"Scheduler: Completed agent for {site.domain}")
+            async with async_session_factory() as db:
+                fixes = await generate_bulk_fix_plans(db, site.id, max_issues=5)
+                autonomous_enabled = bool((site.site_context or {}).get("autonomous_enabled", False))
+
+                for fix in fixes:
+                    fix_content = fix.fix_content or {}
+                    governance = fix_content.get("governance") or {}
+                    risk = RiskAssessment(
+                        score=int(governance.get("risk_score") or 0),
+                        level=governance.get("risk_level", "medium"),
+                        reasons=list(governance.get("risk_reasons", [])),
+                        requires_human_approval=bool(governance.get("requires_human_approval", True)),
+                    )
+                    mode = "auto_execute" if autonomous_enabled and not risk.requires_human_approval else "needs_approval"
+                    if mode == "auto_execute":
+                        fix.status = "approved"
+                        fix.approved_at = datetime.now(timezone.utc)
+                        await db.commit()
+                        await execute_fix_action(db, fix.id)
+
+            logger.info(f"Scheduler: Completed full loop (observe/analyze/plan/execute/evaluate) for {site.domain}")
 
         except Exception as e:
             logger.error(f"Scheduler: Failed for {site.domain}: {e}")
