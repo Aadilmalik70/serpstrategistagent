@@ -9,6 +9,10 @@ import IssuesPanel from "@/components/sites/issues-panel";
 import FixActionsPanel from "@/components/sites/fix-actions-panel";
 import IntegrationsPanel from "@/components/sites/integrations-panel";
 import AgentChatPanel from "@/components/sites/agent-chat-panel";
+import EEATPanel from "@/components/sites/eeat-panel";
+import LinksPanel from "@/components/sites/links-panel";
+import StatusCodesPanel from "@/components/sites/status-codes-panel";
+import VisualizationPanel from "@/components/sites/visualization-panel";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -25,7 +29,7 @@ export default function SiteDetailPage({
 }) {
   const { id } = use(params);
   const { data: site, error, mutate } = useSWR(`${API_URL}/sites/${id}`, fetcher);
-  const [activeTab, setActiveTab] = useState<"agent" | "pages" | "issues" | "fixes" | "integrations">("agent");
+  const [activeTab, setActiveTab] = useState<"agent" | "pages" | "issues" | "fixes" | "eeat" | "links" | "status" | "visualization" | "integrations">("agent");
   const [issueKey, setIssueKey] = useState(0);
 
   if (error) {
@@ -55,6 +59,10 @@ export default function SiteDetailPage({
     { key: "pages", label: "Pages" },
     { key: "issues", label: "Issues" },
     { key: "fixes", label: "Fix Actions" },
+    { key: "eeat", label: "🎓 E-E-A-T" },
+    { key: "links", label: "🔗 Links" },
+    { key: "status", label: "Status Codes" },
+    { key: "visualization", label: "🗺️ Map" },
     { key: "integrations", label: "Integrations" },
   ] as const;
 
@@ -83,8 +91,12 @@ export default function SiteDetailPage({
           </div>
           {activeTab === "agent" && <AgentChatPanel siteId={id} />}
           {activeTab === "pages" && <PagesTable siteId={id} />}
-          {activeTab === "issues" && <IssuesPanel key={issueKey} siteId={id} />}
+          {activeTab === "issues" && <IssuesPanel key={issueKey} siteId={id} site={site} />}
           {activeTab === "fixes" && <FixActionsPanel siteId={id} />}
+          {activeTab === "eeat" && <EEATPanel siteId={id} />}
+          {activeTab === "links" && <LinksPanel siteId={id} />}
+          {activeTab === "status" && <StatusCodesPanel siteId={id} />}
+          {activeTab === "visualization" && <VisualizationPanel siteId={id} />}
           {activeTab === "integrations" && <IntegrationsPanel siteId={id} />}
         </div>
       </main>

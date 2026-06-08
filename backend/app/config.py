@@ -4,7 +4,7 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # Database
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/serpstrategist"
+    database_url: str = "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/serpstrategist"
 
     # Auth
     secret_key: str = "change-me-in-production"
@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     wordpress_url: str = ""  # e.g. https://serpstrategists.com/wp-json
     wordpress_user: str = ""
     wordpress_app_password: str = ""
+
+    # LibreCrawl MCP
+    librecrawl_host: str = "127.0.0.1"
+    librecrawl_port: int = 5080  # LibreCrawl Flask app (Docker)
+    librecrawl_mcp_port: int = 5081  # MCP server (PM2)
+    librecrawl_enabled: bool = True
 
     # App
     app_env: str = "development"

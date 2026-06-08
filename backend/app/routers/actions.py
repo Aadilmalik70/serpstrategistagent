@@ -261,6 +261,51 @@ async def approve_and_execute(fix_id: uuid.UUID, db: AsyncSession = Depends(get_
     return result
 
 
+# === Codex Direct Execution ===
+
+class CodexTaskRequest(BaseModel):
+    task: str  # Natural language task description
+    repo_path: str | None = None  # Local repo path (optional, uses site's github_repo if not set)
+
+
+@router.post("/codex/{site_id}")
+async def run_codex_task(
+    site_id: uuid.UUID,
+    request: CodexTaskRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Run Codex CLI directly on the site's repo with a custom task.
+
+    This allows the agent chat to dispatch coding tasks directly to Codex
+    without going through the fix plan → approve → execute flow.
+    """
+    from app.services.codex_agent import execute_fix_with_codex, run_codex_chat
+
+    site = await db.get(Site, site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    if request.repo_path:
+        # Run on local repo (no PR, just edits)
+        result = await run_codex_chat(request.task, request.repo_path)
+    elif site.github_repo and site.github_token:
+        # Clone, run codex, create PR
+        branch_name = f"codex-fix/{uuid.uuid4().hex[:8]}"
+        result = await execute_fix_with_codex(
+            repo_url=site.github_repo,
+            github_token=site.github_token,
+            task_prompt=request.task,
+            branch_name=branch_name,
+        )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="No GitHub repo configured and no local repo_path provided. Connect GitHub first or provide a local path.",
+        )
+
+    return result
+
+
 # === Helpers ===
 
 def _fix_to_response(fix: FixAction) -> dict:

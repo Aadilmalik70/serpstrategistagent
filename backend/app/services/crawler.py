@@ -1,6 +1,7 @@
 import uuid
 import hashlib
 import asyncio
+import re
 import time
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse

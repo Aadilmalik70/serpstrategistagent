@@ -7,10 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, async_session_factory
+from app.config import get_settings
 from app.models.site import Site
 from app.models.crawl_snapshot import CrawlSnapshot
 from app.models.job_queue import JobQueue
 from app.services.crawler import run_crawl
+from app.services import librecrawl
 
 router = APIRouter(prefix="/crawl", tags=["crawl"])
 
@@ -25,10 +27,26 @@ class CrawlResponse(BaseModel):
 
 
 async def _run_crawl_background(site_id: uuid.UUID, domain: str):
-    """Run crawl in background using a new database session."""
+    """Run crawl in background. Uses LibreCrawl if available, falls back to basic crawler."""
+    settings = get_settings()
+
+    if settings.librecrawl_enabled and await librecrawl.is_available():
+        # Use LibreCrawl's Playwright-based crawler (discovers more pages via JS rendering)
+        result = await librecrawl.crawl_and_sync_pages(domain, site_id)
+        if "error" not in result:
+            # Also sync issues from the crawl data
+            await librecrawl.sync_issues_from_export(site_id, result.get("crawl_id"))
+            async with async_session_factory() as db:
+                site = await db.get(Site, site_id)
+                if site:
+                    site.status = "ready"
+                    await db.commit()
+            return
+        # Fall through to basic crawler if LibreCrawl failed
+
+    # Fallback: basic HTTP crawler
     async with async_session_factory() as db:
         await run_crawl(db, site_id, domain)
-        # Update site status to ready
         site = await db.get(Site, site_id)
         if site:
             site.status = "ready"

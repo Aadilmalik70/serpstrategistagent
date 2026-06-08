@@ -1,4 +1,4 @@
-"""Fix executor — executes approved fix actions via GitHub or WordPress."""
+"""Fix executor — executes approved fix actions via Codex, GitHub, or WordPress."""
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.fix_action import FixAction
 from app.models.site import Site
+from app.services.codex_agent import execute_fix_with_codex
 from app.services.github_integration import GitHubIntegration
 from app.services.llm_analyzer import _get_llm
 from app.services.wordpress_integration import WordPressIntegration
@@ -104,69 +105,69 @@ async def execute_fix_action(db: AsyncSession, fix_action_id: uuid.UUID) -> dict
 
 
 async def _execute_github_pr(site: Site, fix: FixAction) -> dict:
-    """Execute a GitHub PR fix."""
+    """Execute a GitHub PR fix using Codex CLI as a coding agent.
+
+    Codex clones the repo, reads the actual code, makes proper edits,
+    and creates a PR with the changes.
+    """
     if not site.github_repo or not site.github_token:
         return {"error": "GitHub not configured for this site"}
 
     content = fix.fix_content or {}
-    file_path = content.get("file_path") or fix.target_path
-    code_snippet = content.get("code_snippet") or content.get("new_content")
-    commit_message = content.get("commit_message") or f"fix(seo): {fix.title}"
 
-    if not file_path or not code_snippet:
-        return {"error": "Missing file_path or code_snippet in fix_content"}
+    # Build a clear task prompt for Codex (it will figure out the code itself)
+    task_prompt = _build_codex_prompt(site, fix, content)
 
-    github = GitHubIntegration(repo=site.github_repo, token=site.github_token)
-
-    # Fetch existing file content from repo
-    existing_content = await github.get_file_content(file_path)
-
-    # Use LLM to merge snippet into existing file (or generate new file)
-    llm = _get_llm()
-    if not llm:
-        return {"error": "No LLM available for code merging"}
-
-    if existing_content:
-        prompt = MERGE_PROMPT.format(
-            file_path=file_path,
-            existing_content=existing_content,
-            code_snippet=code_snippet,
-            description=fix.description or fix.title,
-        )
-    else:
-        prompt = NEW_FILE_PROMPT.format(
-            tech_stack=site.tech_stack or "nextjs",
-            file_path=file_path,
-            code_snippet=code_snippet,
-            description=fix.description or fix.title,
-        )
-
-    response = await llm.ainvoke(prompt)
-    final_content = response.content.strip()
-
-    # Strip code fences if LLM added them
-    if final_content.startswith("```"):
-        lines = final_content.split("\n")
-        # Remove first line (```lang) and last line (```)
-        if lines[-1].strip() == "```":
-            final_content = "\n".join(lines[1:-1])
-        else:
-            final_content = "\n".join(lines[1:])
-
-    logger.info(f"Generated merged file for {file_path} ({len(final_content)} chars)")
-
-    # Generate a unique branch name
     branch_name = f"seo-fix/{fix.id.hex[:8]}"
 
-    result = await github.create_fix_pr(
-        file_path=file_path,
-        new_content=final_content,
+    logger.info(f"Delegating fix to Codex: {fix.title} on {site.github_repo}")
+
+    result = await execute_fix_with_codex(
+        repo_url=site.github_repo,
+        github_token=site.github_token,
+        task_prompt=task_prompt,
         branch_name=branch_name,
-        title=fix.title,
-        description=fix.description or f"Automated SEO fix for {site.domain}",
     )
 
     return result
+
+
+def _build_codex_prompt(site: Site, fix: FixAction, content: dict) -> str:
+    """Build a clear, actionable prompt for Codex to execute the fix."""
+    parts = [
+        f"You are fixing an SEO issue on the website {site.domain}.",
+        f"Tech stack: {site.tech_stack or 'unknown'}, CMS: {site.cms or 'unknown'}.",
+        "",
+        f"## Issue",
+        f"Title: {fix.title}",
+        f"Description: {fix.description or 'No description'}",
+    ]
+
+    if fix.target_path:
+        parts.append(f"Affected file/path: {fix.target_path}")
+
+    if content.get("file_path"):
+        parts.append(f"Target file: {content['file_path']}")
+
+    if content.get("affected_url"):
+        parts.append(f"Affected URL: {content['affected_url']}")
+
+    if content.get("current_value"):
+        parts.append(f"Current value: {content['current_value']}")
+
+    if content.get("recommended_value"):
+        parts.append(f"Recommended value: {content['recommended_value']}")
+
+    if content.get("instructions"):
+        parts.append(f"\n## Instructions\n{content['instructions']}")
+
+    parts.append("")
+    parts.append("## Task")
+    parts.append("Find the relevant file(s) in this repo and make the minimum change needed to fix this SEO issue.")
+    parts.append("Do NOT add unnecessary changes. Only fix what's described above.")
+    parts.append("Make sure the code compiles and is valid.")
+
+    return "\n".join(parts)
 
 
 async def _execute_wordpress_update(site: Site, fix: FixAction) -> dict:

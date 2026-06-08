@@ -1,4 +1,8 @@
-"""Fix planner — LLM generates concrete fixes for SEO issues."""
+"""Fix planner — generates task-oriented fix plans for SEO issues.
+
+The fix plan describes WHAT needs to change (not HOW to code it).
+Actual code generation is delegated to Codex CLI during execution.
+"""
 import logging
 import json
 import uuid
@@ -15,12 +19,16 @@ from app.services.llm_analyzer import _get_llm
 logger = logging.getLogger(__name__)
 
 
-FIX_PLAN_PROMPT = """You are an SEO fix generator. Given an SEO issue and the website's technology stack, generate a concrete fix.
+FIX_PLAN_PROMPT = """You are an SEO fix planner. Given an SEO issue, generate a clear fix plan.
+
+IMPORTANT: You are NOT writing code. You are describing WHAT needs to change so a coding agent can implement it.
 
 SITE INFO:
 - Domain: {domain}
 - Tech Stack: {tech_stack}
 - CMS: {cms}
+- Has GitHub: {has_github}
+- Has WordPress: {has_wordpress}
 
 ISSUE:
 - Title: {title}
@@ -28,30 +36,30 @@ ISSUE:
 - Severity: {severity}
 - Category: {category}
 - Affected URL: {affected_url}
-- Current recommendation: {recommendation}
+- Recommendation: {recommendation}
 
-Based on the technology, generate a fix. The site has a connected GitHub repo.
+Generate a fix plan. Choose action_type based on what's available:
+- "github_pr" if the site has GitHub connected (code-based fix, Codex will implement it)
+- "wordpress_update" if the site has WordPress connected (CMS content fix)
+- "recommendation" if neither is connected (give the user clear manual instructions)
 
-For code-based fixes (Next.js/React), return:
-- action_type: "github_pr"
-- file_path: which file to create/modify (e.g., "app/layout.tsx", "next.config.js")
-- code_snippet: ONLY the specific code to add or change (not the full file). Use single-line escaped format.
-- commit_message: short commit message
+For "github_pr": Describe the change clearly — what file likely needs editing, what the current problem is, and what the fix should achieve. Do NOT write actual code — a coding agent will handle that.
 
-IMPORTANT: Keep code_snippet SHORT — just the relevant metadata/component code, not entire files.
-All string values must be on ONE line (escape newlines as \\n).
+For "recommendation": Give specific, actionable steps the user can follow manually. Include exact values (e.g., "Set meta description to: '...'").
 
-RESPOND IN VALID JSON ONLY (all on single lines, no actual newlines in string values):
+RESPOND IN VALID JSON:
 {{
-  "action_type": "github_pr",
-  "title": "Short fix title",
-  "description": "What this fix does",
+  "action_type": "github_pr" | "wordpress_update" | "recommendation",
+  "title": "Short descriptive title of the fix",
+  "description": "Clear explanation of what this fix does and why",
   "fix_content": {{
-    "file_path": "app/layout.tsx",
-    "code_snippet": "export const metadata = {{ title: 'My Site', description: 'My description' }}",
-    "commit_message": "fix(seo): add missing meta description"
+    "affected_url": "/the-affected-page",
+    "current_value": "what's wrong now (e.g., missing title, duplicate H1)",
+    "recommended_value": "what it should be",
+    "instructions": "Clear step-by-step instructions for fixing this. For github_pr, describe what file to edit and what to change. For recommendation, give manual steps.",
+    "file_path": "likely/file/path.tsx (best guess, optional)"
   }},
-  "target_path": "app/layout.tsx"
+  "target_path": "/affected-url-path"
 }}
 """
 
@@ -62,6 +70,7 @@ async def generate_fix_plan(
 ) -> FixAction | None:
     """Generate a fix plan for a specific issue using LLM.
 
+    The plan describes WHAT to fix. Execution (via Codex) handles HOW.
     Returns the created FixAction (status=pending) or None if generation fails.
     """
     # Load issue and site
@@ -88,6 +97,8 @@ async def generate_fix_plan(
         domain=site.domain,
         tech_stack=site.tech_stack or "unknown",
         cms=site.cms or "none",
+        has_github="Yes" if has_github else "No",
+        has_wordpress="Yes" if has_wordpress else "No",
         title=issue.title,
         description=issue.description,
         severity=issue.severity,
@@ -187,9 +198,11 @@ async def generate_bulk_fix_plans(
     # Sort by severity priority manually
     issues = sorted(issues, key=lambda i: severity_order.index(i.severity) if i.severity in severity_order else 99)
 
-    # Filter out issues that already have fix_actions
+    # Filter out issues that already have fix_actions, collect up to max_issues
     issues_to_fix = []
-    for issue in issues[:max_issues]:
+    for issue in issues:
+        if len(issues_to_fix) >= max_issues:
+            break
         existing = await db.execute(
             select(FixAction).where(FixAction.issue_id == issue.id)
         )
@@ -197,7 +210,7 @@ async def generate_bulk_fix_plans(
             issues_to_fix.append(issue)
 
     fix_actions = []
-    for issue in issues_to_fix[:max_issues]:
+    for issue in issues_to_fix:
         fix = await generate_fix_plan(db, issue.id)
         if fix:
             fix_actions.append(fix)

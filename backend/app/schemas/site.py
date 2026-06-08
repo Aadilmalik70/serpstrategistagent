@@ -33,10 +33,24 @@ class SiteResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class LatestRunInfo(BaseModel):
+    id: uuid.UUID
+    status: str
+    pages_analyzed: int = 0
+    issues_found: int = 0
+    summary: str | None = None
+    completed_at: datetime | None = None
+
+
 class SiteDetailResponse(SiteResponse):
     page_count: int = 0
+    issue_count: int = 0
     last_crawled_at: datetime | None = None
     tech_stack: str | None = None
     cms: str | None = None
     github_connected: bool = False
     wordpress_connected: bool = False
+    health_score: int | None = None
+    health_grade: str | None = None
+    latest_run: LatestRunInfo | None = None
+    librecrawl_enabled: bool = False

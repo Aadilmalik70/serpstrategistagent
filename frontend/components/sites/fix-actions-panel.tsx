@@ -247,134 +247,204 @@ function FixCard({
   executing?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const content = fix.fix_content || {};
 
   return (
-    <div className="border border-gray-200 rounded-lg p-4 bg-white">
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-2 flex-1">
-          <span>{actionTypeIcons[fix.action_type] || "📋"}</span>
-          <span
-            className={`text-xs px-2 py-0.5 rounded font-medium ${
-              statusColors[fix.status] || "bg-gray-100 text-gray-800"
-            }`}
-          >
-            {fix.status}
+    <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
+      {/* Header */}
+      <div
+        className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <span className="text-lg shrink-0">{actionTypeIcons[fix.action_type] || "📋"}</span>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span
+                  className={`text-xs px-2 py-0.5 rounded font-medium ${
+                    statusColors[fix.status] || "bg-gray-100 text-gray-800"
+                  }`}
+                >
+                  {fix.status}
+                </span>
+                <h4 className="font-medium text-sm text-gray-900">{fix.title}</h4>
+              </div>
+              {fix.target_path && (
+                <p className="text-xs text-gray-400 mt-0.5 font-mono truncate">
+                  {fix.target_path}
+                </p>
+              )}
+            </div>
+          </div>
+          <span className="text-gray-400 text-xs ml-2 shrink-0">
+            {expanded ? "▲" : "▼"}
           </span>
-          <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">
-            {fix.action_type.replace("_", " ")}
-          </span>
-          <h4 className="font-medium text-sm">{fix.title}</h4>
         </div>
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="text-xs text-gray-400 hover:text-gray-600 ml-2"
-        >
-          {expanded ? "▲" : "▼"}
-        </button>
+
+        {fix.description && (
+          <p className="text-sm text-gray-600 mt-2 line-clamp-2">{fix.description}</p>
+        )}
       </div>
 
-      {fix.target_path && (
-        <p className="text-xs text-gray-400 mt-1 font-mono">{fix.target_path}</p>
-      )}
-
-      {fix.description && (
-        <p className="text-sm text-gray-600 mt-2">{fix.description}</p>
-      )}
-
       {/* Expanded details */}
-      {expanded && fix.fix_content && (
-        <div className="mt-3 p-3 bg-gray-50 rounded text-xs font-mono overflow-auto max-h-60">
-          <pre>{JSON.stringify(fix.fix_content, null, 2)}</pre>
-        </div>
-      )}
+      {expanded && (
+        <div className="border-t border-gray-100">
+          {/* Fix content - human-readable */}
+          {(content.affected_url || content.current_value || content.recommended_value || content.instructions) && (
+            <div className="px-4 py-3 space-y-3 bg-gray-50">
+              {content.affected_url && (
+                <div>
+                  <span className="text-xs font-medium text-gray-500 uppercase">Affected URL</span>
+                  <p className="text-sm font-mono text-gray-800 mt-0.5">{String(content.affected_url)}</p>
+                </div>
+              )}
+              {content.current_value && (
+                <div>
+                  <span className="text-xs font-medium text-gray-500 uppercase">Current (Problem)</span>
+                  <p className="text-sm text-red-700 bg-red-50 px-2 py-1 rounded mt-0.5">{String(content.current_value)}</p>
+                </div>
+              )}
+              {content.recommended_value && (
+                <div>
+                  <span className="text-xs font-medium text-gray-500 uppercase">Recommended Fix</span>
+                  <p className="text-sm text-green-700 bg-green-50 px-2 py-1 rounded mt-0.5">{String(content.recommended_value)}</p>
+                </div>
+              )}
+              {content.instructions && (
+                <div>
+                  <span className="text-xs font-medium text-gray-500 uppercase">Instructions</span>
+                  <div className="text-sm text-gray-700 mt-1 whitespace-pre-wrap bg-white border border-gray-200 rounded p-3">
+                    {String(content.instructions)}
+                  </div>
+                </div>
+              )}
+              {content.file_path && (
+                <div>
+                  <span className="text-xs font-medium text-gray-500 uppercase">Target File</span>
+                  <p className="text-sm font-mono text-gray-600 mt-0.5">{String(content.file_path)}</p>
+                </div>
+              )}
+            </div>
+          )}
 
-      {/* Execution result */}
-      {fix.execution_result && (
-        <div className="mt-3 p-3 bg-green-50 rounded text-xs">
-          {fix.execution_result.pr_url && (
-            <a
-              href={String(fix.execution_result.pr_url)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
-            >
-              🔗 View PR: {String(fix.execution_result.pr_url)}
-            </a>
+          {/* Legacy: raw JSON for old fix plans without structured content */}
+          {!content.instructions && !content.current_value && !content.recommended_value && fix.fix_content && (
+            <div className="px-4 py-3 bg-gray-50">
+              <details className="text-xs">
+                <summary className="cursor-pointer text-gray-500 hover:text-gray-700">View raw fix data</summary>
+                <pre className="mt-2 overflow-auto max-h-40 text-xs font-mono text-gray-600">
+                  {JSON.stringify(fix.fix_content, null, 2)}
+                </pre>
+              </details>
+            </div>
           )}
-          {fix.execution_result.url && (
-            <a
-              href={String(fix.execution_result.url)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:underline"
-            >
-              🔗 View updated post: {String(fix.execution_result.url)}
-            </a>
-          )}
-          {fix.execution_result.error && (
-            <p className="text-red-600">❌ {String(fix.execution_result.error)}</p>
-          )}
-          {fix.execution_result.steps && (
-            <ul className="list-disc list-inside space-y-1 text-gray-700">
-              {(fix.execution_result.steps as string[]).map((step, i) => (
-                <li key={i}>{step}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
 
-      {/* Manual steps for recommendations */}
-      {fix.status !== "completed" && fix.action_type === "recommendation" && fix.fix_content?.steps && (
-        <div className="mt-3 p-3 bg-blue-50 rounded text-sm">
-          <p className="font-medium text-blue-800 mb-1">📋 Manual Steps:</p>
-          <ul className="list-decimal list-inside space-y-1 text-blue-900">
-            {(Array.isArray(fix.fix_content.steps)
-              ? fix.fix_content.steps
-              : (fix.fix_content.steps as string).split(/\d+\.\s*/).filter(Boolean)
-            ).map((step: string, i: number) => (
-              <li key={i}>{step}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+          {/* Execution result */}
+          {fix.execution_result && (
+            <div className="px-4 py-3 border-t border-gray-100">
+              {fix.execution_result.pr_url && (
+                <a
+                  href={String(fix.execution_result.pr_url)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:underline font-medium"
+                >
+                  🔀 View Pull Request
+                </a>
+              )}
+              {fix.execution_result.files_changed && (
+                <div className="mt-2">
+                  <span className="text-xs text-gray-500">Files changed:</span>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {(fix.execution_result.files_changed as string[]).map((f, i) => (
+                      <span key={i} className="text-xs font-mono bg-gray-100 px-1.5 py-0.5 rounded">{f}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {fix.execution_result.url && (
+                <a
+                  href={String(fix.execution_result.url)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:underline"
+                >
+                  🔗 View updated page
+                </a>
+              )}
+              {fix.execution_result.status === "no_changes" && (
+                <p className="text-sm text-amber-700 bg-amber-50 px-3 py-2 rounded">
+                  ⚠️ Codex ran but made no file changes. The issue may require manual intervention.
+                </p>
+              )}
+              {fix.execution_result.status === "recommendation" && (
+                <p className="text-sm text-blue-700 bg-blue-50 px-3 py-2 rounded">
+                  ℹ️ This is a manual recommendation — follow the instructions above to fix.
+                </p>
+              )}
+              {fix.execution_result.error && (
+                <p className="text-sm text-red-700 bg-red-50 px-3 py-2 rounded">
+                  ❌ {String(fix.execution_result.error)}
+                </p>
+              )}
+            </div>
+          )}
 
-      {/* Action buttons */}
-      {(onApprove || onReject || onExecute || onApproveAndExecute) && (
-        <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100">
-          {onApproveAndExecute && (
-            <button
-              onClick={onApproveAndExecute}
-              disabled={executing}
-              className="px-3 py-1.5 text-xs font-medium rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
-            >
-              {executing ? "Executing..." : "✓ Approve & Execute"}
-            </button>
-          )}
-          {onApprove && (
-            <button
-              onClick={onApprove}
-              className="px-3 py-1.5 text-xs font-medium rounded bg-blue-600 text-white hover:bg-blue-700"
-            >
-              ✓ Approve
-            </button>
-          )}
-          {onExecute && (
-            <button
-              onClick={onExecute}
-              disabled={executing}
-              className="px-3 py-1.5 text-xs font-medium rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
-            >
-              {executing ? "Executing..." : "▶ Execute"}
-            </button>
-          )}
-          {onReject && (
-            <button
-              onClick={onReject}
-              className="px-3 py-1.5 text-xs font-medium rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
-            >
-              ✗ Reject
-            </button>
+          {/* Action buttons */}
+          {(onApprove || onReject || onExecute || onApproveAndExecute) && (
+            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-100 bg-white">
+              {onApproveAndExecute && fix.action_type === "github_pr" && (
+                <button
+                  onClick={onApproveAndExecute}
+                  disabled={executing}
+                  className="px-4 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {executing ? (
+                    <>
+                      <span className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Running Codex...
+                    </>
+                  ) : (
+                    "🤖 Run with Codex"
+                  )}
+                </button>
+              )}
+              {onApproveAndExecute && fix.action_type !== "github_pr" && (
+                <button
+                  onClick={onApproveAndExecute}
+                  disabled={executing}
+                  className="px-4 py-2 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  {executing ? "Executing..." : "✓ Approve & Execute"}
+                </button>
+              )}
+              {onApprove && (
+                <button
+                  onClick={onApprove}
+                  className="px-3 py-2 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  ✓ Approve
+                </button>
+              )}
+              {onExecute && (
+                <button
+                  onClick={onExecute}
+                  disabled={executing}
+                  className="px-3 py-2 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  {executing ? "Running..." : "▶ Execute"}
+                </button>
+              )}
+              {onReject && (
+                <button
+                  onClick={onReject}
+                  className="px-3 py-2 text-sm font-medium rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50"
+                >
+                  ✗ Dismiss
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

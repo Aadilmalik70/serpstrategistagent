@@ -19,9 +19,16 @@ interface PageItem {
   id: string;
   path: string;
   title: string | null;
+  meta_description: string | null;
+  h1: string | null;
   status_code: number | null;
   word_count: number | null;
   response_time_ms: number | null;
+  meta: {
+    internal_links_count?: number;
+    external_links_count?: number;
+    images_count?: number;
+  } | null;
 }
 
 export default function PagesTable({ siteId }: PagesTableProps) {
@@ -60,6 +67,15 @@ export default function PagesTable({ siteId }: PagesTableProps) {
 
   return (
     <div>
+      <div className="flex justify-end mb-3">
+        <a
+          href={`${API_URL}/sites/${siteId}/export?format=csv`}
+          download
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+        >
+          📥 Export CSV
+        </a>
+      </div>
       <div className="overflow-x-auto bg-white rounded-lg border border-gray-200">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
@@ -94,6 +110,15 @@ export default function PagesTable({ siteId }: PagesTableProps) {
               >
                 Response{sortIndicator("response_time_ms")}
               </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                H1
+              </th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                Int Links
+              </th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                Ext Links
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
@@ -123,6 +148,15 @@ export default function PagesTable({ siteId }: PagesTableProps) {
                 </td>
                 <td className="px-4 py-3 text-sm text-gray-600">
                   {p.response_time_ms ? `${p.response_time_ms}ms` : "—"}
+                </td>
+                <td className="px-4 py-3 text-sm text-gray-600 max-w-50 truncate">
+                  {p.h1 || "—"}
+                </td>
+                <td className="px-4 py-3 text-sm text-center text-gray-600">
+                  {p.meta?.internal_links_count ?? "—"}
+                </td>
+                <td className="px-4 py-3 text-sm text-center text-gray-600">
+                  {p.meta?.external_links_count ?? "—"}
                 </td>
               </tr>
             ))}

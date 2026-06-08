@@ -7,6 +7,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 
 from app.database import async_session_factory
+from app.config import get_settings
 from app.models.site import Site
 from app.models.page import Page
 from app.models.issue import Issue
@@ -14,6 +15,7 @@ from app.models.agent_run import AgentRun
 from app.services.agent import PAGE_CHECKS, _check_duplicate_title
 from app.services.llm_analyzer import analyze_site_with_llm
 from app.services.health_score import calculate_health_score
+from app.services import librecrawl
 
 from sqlalchemy import select, delete
 
@@ -27,13 +29,21 @@ class AgentState(TypedDict):
     issues_created: int
     error: str | None
     health_score: dict | None
+    # LibreCrawl technical audit data
+    librecrawl_site_check: dict | None
+    librecrawl_audit: dict | None
 
 
 async def observe_node(state: AgentState) -> AgentState:
-    """Observe node: Load crawled pages from DB."""
+    """Observe node: Load crawled pages from DB + run LibreCrawl site-level checks."""
     site_id = uuid.UUID(state["site_id"])
+    settings = get_settings()
 
     async with async_session_factory() as db:
+        # Load site domain for LibreCrawl calls
+        site = await db.get(Site, site_id)
+        domain = site.domain if site else ""
+
         result = await db.execute(
             select(Page).where(Page.site_id == site_id).order_by(Page.path)
         )
@@ -53,18 +63,28 @@ async def observe_node(state: AgentState) -> AgentState:
             for p in pages
         ]
 
+    # LibreCrawl: quick site-level health (robots.txt, sitemap, HTTPS, www)
+    if settings.librecrawl_enabled and domain:
+        site_check_result = await librecrawl.site_check(domain)
+        state["librecrawl_site_check"] = site_check_result
+        if "error" not in site_check_result:
+            logger.info(f"LibreCrawl site_check: {domain} — signals collected")
+    else:
+        state["librecrawl_site_check"] = None
+
     return state
 
 
 async def analyze_node(state: AgentState) -> AgentState:
-    """Analyze node: Run rule-based checks + LLM analysis, create issues."""
+    """Analyze node: Run rule-based checks + LLM analysis + LibreCrawl audit, create issues."""
     site_id = uuid.UUID(state["site_id"])
     run_id = uuid.UUID(state["run_id"])
+    settings = get_settings()
 
     async with async_session_factory() as db:
-        # Clear previous open issues
+        # Clear ALL previous issues for this site (full re-analysis replaces old data)
         await db.execute(
-            delete(Issue).where(Issue.site_id == site_id, Issue.status == "open")
+            delete(Issue).where(Issue.site_id == site_id)
         )
         await db.commit()
 
@@ -105,12 +125,34 @@ async def analyze_node(state: AgentState) -> AgentState:
             db.add(issue)
             issues_created += 1
 
-        # LLM-powered analysis
+        # --- LibreCrawl technical SEO audit ---
         site = await db.get(Site, site_id)
+        domain = site.domain if site else ""
+
+        if settings.librecrawl_enabled and domain:
+            audit_result = await librecrawl.start_audit(domain, max_pages=min(len(pages) * 2, 500))
+            state["librecrawl_audit"] = audit_result
+
+            # Convert LibreCrawl site_check signals into issues
+            site_check = state.get("librecrawl_site_check") or {}
+            issues_created += _create_issues_from_site_check(
+                db, site_id, run_id, site_check
+            )
+
+            # Convert LibreCrawl audit findings into issues
+            if "error" not in audit_result:
+                issues_created += _create_issues_from_audit(
+                    db, site_id, run_id, audit_result
+                )
+        else:
+            state["librecrawl_audit"] = None
+
+        # LLM-powered analysis
         site_context = {
-            "domain": site.domain if site else "",
+            "domain": domain,
             "site_name": site.name if site else "",
             "total_pages": len(pages),
+            "librecrawl_site_check": state.get("librecrawl_site_check"),
         }
         pages_data = [
             {
@@ -172,16 +214,199 @@ async def report_node(state: AgentState) -> AgentState:
             # Calculate health score
             health = await calculate_health_score(db, site_id)
             state["health_score"] = health
+
+            librecrawl_note = ""
+            if state.get("librecrawl_audit") and "error" not in state["librecrawl_audit"]:
+                librecrawl_note = " [+LibreCrawl audit]"
+
             agent_run.summary = (
                 f"Analyzed {len(state['pages'])} pages. "
                 f"Found {state['issues_created']} issues. "
                 f"Health: {health['score']}/100 ({health['grade']})"
+                f"{librecrawl_note}"
             )
 
         agent_run.completed_at = datetime.now(timezone.utc)
         await db.commit()
 
     return state
+
+
+# ---------------------------------------------------------------------------
+# LibreCrawl → Issue converters
+# ---------------------------------------------------------------------------
+
+def _create_issues_from_site_check(
+    db, site_id: uuid.UUID, run_id: uuid.UUID, site_check: dict
+) -> int:
+    """Convert LibreCrawl site_check results into Issue records.
+    Returns number of issues created."""
+    if not site_check or "error" in site_check:
+        return 0
+
+    issues_created = 0
+    content = site_check.get("content", [{}])
+    # MCP tool results come as content[].text (JSON string)
+    data = _parse_mcp_content(content)
+    if not data:
+        return 0
+
+    # Check robots.txt
+    robots = data.get("robots_txt", {})
+    if robots.get("status") == "missing":
+        db.add(Issue(
+            site_id=site_id, agent_run_id=run_id,
+            category="technical", severity="high",
+            title="Missing robots.txt",
+            description="No robots.txt found. Search engines have no crawl directives.",
+            recommendation="Create a robots.txt file with appropriate crawl rules and a Sitemap directive.",
+        ))
+        issues_created += 1
+
+    # Check sitemap
+    sitemap = data.get("sitemap", {})
+    if sitemap.get("status") == "missing":
+        db.add(Issue(
+            site_id=site_id, agent_run_id=run_id,
+            category="technical", severity="high",
+            title="Missing sitemap.xml",
+            description="No sitemap.xml found. Search engines may miss pages.",
+            recommendation="Generate and submit an XML sitemap listing all indexable URLs.",
+        ))
+        issues_created += 1
+
+    # Check HTTPS
+    https_check = data.get("https", {})
+    if not https_check.get("redirects_to_https", True):
+        db.add(Issue(
+            site_id=site_id, agent_run_id=run_id,
+            category="technical", severity="critical",
+            title="No HTTPS redirect",
+            description="HTTP does not redirect to HTTPS. This hurts rankings and security.",
+            recommendation="Configure server to 301 redirect all HTTP traffic to HTTPS.",
+        ))
+        issues_created += 1
+
+    # Check www canonicalization
+    www = data.get("www_canonicalization", {})
+    if www.get("issue"):
+        db.add(Issue(
+            site_id=site_id, agent_run_id=run_id,
+            category="technical", severity="medium",
+            title="www/non-www not canonicalized",
+            description="Both www and non-www versions resolve without redirecting to one canonical.",
+            recommendation="Choose one version (www or non-www) and 301 redirect the other.",
+        ))
+        issues_created += 1
+
+    return issues_created
+
+
+def _create_issues_from_audit(
+    db, site_id: uuid.UUID, run_id: uuid.UUID, audit_result: dict
+) -> int:
+    """Convert LibreCrawl full audit findings into Issue records.
+    Returns number of issues created."""
+    if not audit_result or "error" in audit_result:
+        return 0
+
+    content = audit_result.get("content", [{}])
+    data = _parse_mcp_content(content)
+    if not data:
+        return 0
+
+    issues_created = 0
+
+    # Broken links (4xx/5xx)
+    broken_links = data.get("broken_links", [])
+    for bl in broken_links[:20]:  # Cap to avoid flooding
+        db.add(Issue(
+            site_id=site_id, agent_run_id=run_id,
+            category="technical", severity="critical",
+            title=f"Broken link: {bl.get('url', 'unknown')} ({bl.get('status_code', '?')})",
+            description=f"Found on: {bl.get('source_page', 'unknown')}",
+            recommendation="Fix or remove the broken link.",
+            affected_url=bl.get("source_page"),
+        ))
+        issues_created += 1
+
+    # Redirect chains
+    redirect_chains = data.get("redirect_chains", [])
+    for chain in redirect_chains[:10]:
+        chain_str = " → ".join(chain.get("chain", []))
+        db.add(Issue(
+            site_id=site_id, agent_run_id=run_id,
+            category="technical", severity="medium",
+            title=f"Redirect chain ({len(chain.get('chain', []))} hops)",
+            description=f"Chain: {chain_str}",
+            recommendation="Update links to point directly to the final destination URL.",
+            affected_url=chain.get("chain", [""])[0] if chain.get("chain") else None,
+        ))
+        issues_created += 1
+
+    # Orphan pages
+    orphan_pages = data.get("orphan_pages", [])
+    for orphan in orphan_pages[:15]:
+        url = orphan if isinstance(orphan, str) else orphan.get("url", "")
+        db.add(Issue(
+            site_id=site_id, agent_run_id=run_id,
+            category="structure", severity="medium",
+            title=f"Orphan page: {url}",
+            description="This page has zero internal links pointing to it. Googlebot may not discover it.",
+            recommendation="Add internal links from relevant pages to this URL.",
+            affected_url=url,
+        ))
+        issues_created += 1
+
+    # Canonical issues
+    canonical_issues = data.get("canonical_issues", [])
+    for ci in canonical_issues[:10]:
+        db.add(Issue(
+            site_id=site_id, agent_run_id=run_id,
+            category="technical", severity="high",
+            title=f"Canonical issue: {ci.get('type', 'unknown')}",
+            description=f"URL: {ci.get('url', '')} — {ci.get('detail', '')}",
+            recommendation="Fix the canonical tag to point to the correct preferred URL.",
+            affected_url=ci.get("url"),
+        ))
+        issues_created += 1
+
+    # Missing alt text (aggregate)
+    images = data.get("images", {})
+    missing_alt_count = images.get("missing_alt_count", 0)
+    if missing_alt_count > 0:
+        db.add(Issue(
+            site_id=site_id, agent_run_id=run_id,
+            category="accessibility", severity="medium",
+            title=f"Missing image alt text ({missing_alt_count} images)",
+            description=f"{missing_alt_count} images lack alt attributes across the site.",
+            recommendation="Add descriptive alt text to all informational images.",
+        ))
+        issues_created += 1
+
+    return issues_created
+
+
+def _parse_mcp_content(content) -> dict | None:
+    """Parse MCP tool result content array into a dict."""
+    import json
+    if not content:
+        return None
+    if isinstance(content, dict):
+        return content
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and "text" in item:
+                try:
+                    return json.loads(item["text"])
+                except (json.JSONDecodeError, TypeError):
+                    return None
+            if isinstance(item, dict):
+                return item
+    return None
+
+
+# ---------------------------------------------------------------------------
 
 
 def build_agent_graph():
@@ -214,6 +439,8 @@ async def run_agent_graph(site_id: uuid.UUID, run_id: uuid.UUID):
             "issues_created": 0,
             "error": None,
             "health_score": None,
+            "librecrawl_site_check": None,
+            "librecrawl_audit": None,
         }
 
         await agent_graph.ainvoke(initial_state)
