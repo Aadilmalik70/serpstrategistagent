@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.issue import Issue
 from app.models.site import Site
 from app.models.fix_action import FixAction
+from app.services.fix_governance import assess_fix_risk
 from app.services.llm_analyzer import _get_llm
 
 logger = logging.getLogger(__name__)
@@ -153,6 +154,36 @@ async def generate_fix_plan(
     if action_type == "wordpress_update" and not has_wordpress:
         action_type = "recommendation"
 
+    fix_content = fix_data.get("fix_content") or {}
+    changed_files = int(fix_content.get("changed_files") or 1)
+    risk = assess_fix_risk(
+        severity=issue.severity,
+        target_path=fix_data.get("target_path"),
+        changed_files=changed_files,
+        action_type=action_type,
+    )
+    autonomous_enabled = bool((site.site_context or {}).get("autonomous_enabled", False))
+    execution_mode = "auto_execute" if autonomous_enabled and not risk.requires_human_approval else "needs_approval"
+    fix_content.setdefault(
+        "sandbox",
+        {
+            "build_passed": False,
+            "smoke_passed": False,
+            "seo_passed": False,
+            "build_message": "Sandbox build check required before execution",
+            "smoke_message": "Sandbox smoke test required before execution",
+            "seo_message": "Sandbox SEO checks required before execution",
+        },
+    )
+    fix_content["governance"] = {
+        "issue_severity": issue.severity,
+        "risk_level": risk.level,
+        "risk_score": risk.score,
+        "risk_reasons": risk.reasons,
+        "requires_human_approval": risk.requires_human_approval,
+        "recommended_mode": execution_mode,
+    }
+
     # Create the fix action
     fix_action = FixAction(
         site_id=site.id,
@@ -161,7 +192,7 @@ async def generate_fix_plan(
         status="pending",
         title=fix_data.get("title", issue.title),
         description=fix_data.get("description", ""),
-        fix_content=fix_data.get("fix_content"),
+        fix_content=fix_content,
         target_path=fix_data.get("target_path"),
     )
     db.add(fix_action)
