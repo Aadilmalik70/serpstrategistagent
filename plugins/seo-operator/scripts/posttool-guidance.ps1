@@ -1,0 +1,1 @@
+@{ additionalContext = "If a substantive write just occurred, run the narrowest verification step now before widening scope." } | ConvertTo-Json -Compress

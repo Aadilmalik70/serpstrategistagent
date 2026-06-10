@@ -1,0 +1,22 @@
+{
+  "name": "seo-operator",
+  "description": "Workflow-heavy GitHub Copilot CLI plugin for SEO setup, audit, recommendation, and safe fixes using Search Console, GA4, and SerpAPI.",
+  "version": "0.1.0",
+  "author": {
+    "name": "SERP Strategist"
+  },
+  "license": "MIT",
+  "keywords": [
+    "seo",
+    "search-console",
+    "ga4",
+    "serpapi",
+    "wordpress",
+    "copilot-plugin"
+  ],
+  "agents": "agents/",
+  "skills": "skills/",
+  "commands": "commands/",
+  "hooks": "hooks.json",
+  "mcpServers": ".mcp.json"
+}

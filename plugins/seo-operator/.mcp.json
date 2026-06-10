@@ -1,0 +1,38 @@
+{
+  "mcpServers": {
+    "searchConsoleSuite": {
+      "type": "stdio",
+      "powershell": "${PLUGIN_ROOT}/scripts/start-search-console-mcp.ps1",
+      "bash": "${PLUGIN_ROOT}/scripts/start-search-console-mcp.sh",
+      "tools": [
+        "*"
+      ],
+      "timeout": 120000
+    },
+    "ga4Official": {
+      "type": "stdio",
+      "powershell": "${PLUGIN_ROOT}/scripts/start-ga4-official-mcp.ps1",
+      "bash": "${PLUGIN_ROOT}/scripts/start-ga4-official-mcp.sh",
+      "tools": [
+        "*"
+      ],
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "${GOOGLE_APPLICATION_CREDENTIALS:-}",
+        "GOOGLE_PROJECT_ID": "${GOOGLE_PROJECT_ID:-}",
+        "GOOGLE_CLOUD_PROJECT": "${GOOGLE_CLOUD_PROJECT:-}"
+      },
+      "timeout": 120000
+    },
+    "serpapi": {
+      "type": "http",
+      "url": "https://mcp.serpapi.com/mcp",
+      "tools": [
+        "*"
+      ],
+      "headers": {
+        "Authorization": "Bearer ${SERPAPI_API_KEY:-}"
+      },
+      "timeout": 120000
+    }
+  }
+}

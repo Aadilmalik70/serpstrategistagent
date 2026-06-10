@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "powershell": "${PLUGIN_ROOT}/scripts/pretool-policy.ps1",
+        "bash": "${PLUGIN_ROOT}/scripts/pretool-policy.sh",
+        "timeoutSec": 10
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "powershell": "${PLUGIN_ROOT}/scripts/posttool-guidance.ps1",
+        "bash": "${PLUGIN_ROOT}/scripts/posttool-guidance.sh",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}
