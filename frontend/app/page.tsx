@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
 import useSWR from "swr";
 import SiteCard from "@/components/dashboard/site-card";
@@ -39,12 +40,12 @@ export default function Dashboard() {
       <main className="max-w-7xl mx-auto px-6 py-8">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-semibold">Your Sites</h2>
-          <a
+          <Link
             href="/sites/new"
             className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium"
           >
             Add Site
-          </a>
+          </Link>
         </div>
 
         {/* Loading state */}

@@ -1,4 +1,4 @@
-# Backend - SERP Strategist Agent API
+# Backend - SERP Strategists Operator API
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 sqlalchemy[asyncio]>=2.0.30
@@ -10,7 +10,14 @@ python-dotenv>=1.0.0
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 httpx>=0.27.0
-# Phase 2: Intelligence
+redis>=5.0.0
+APScheduler>=3.10.4
+
+# Agent runtime
 langgraph>=0.2.0
 langchain-core>=0.3.0
 langchain-google-genai>=2.0.0
+
+# Tests
+pytest>=8.2.0
+pytest-asyncio>=0.23.0

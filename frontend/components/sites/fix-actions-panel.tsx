@@ -5,11 +5,7 @@ import useSWR from "swr";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-async function fetcher(url: string) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Failed to fetch");
-  return res.json();
-}
+type JsonRecord = Record<string, unknown>;
 
 interface FixAction {
   id: string;
@@ -19,9 +15,9 @@ interface FixAction {
   status: string;
   title: string;
   description: string | null;
-  fix_content: Record<string, unknown> | null;
+  fix_content: JsonRecord | null;
   target_path: string | null;
-  execution_result: Record<string, unknown> | null;
+  execution_result: JsonRecord | null;
   created_at: string;
   approved_at: string | null;
   executed_at: string | null;
@@ -42,10 +38,38 @@ const actionTypeIcons: Record<string, string> = {
   recommendation: "💡",
 };
 
+async function fetcher(url: string): Promise<FixAction[]> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Failed to fetch fix actions");
+  return response.json() as Promise<FixAction[]>;
+}
+
+function hasValue(value: unknown): boolean {
+  return value !== null && value !== undefined && value !== "";
+}
+
+function asText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (value === null || value === undefined) return "";
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(asText).filter(Boolean) : [];
+}
+
 export default function FixActionsPanel({ siteId }: { siteId: string }) {
   const { data: fixes, error, mutate } = useSWR<FixAction[]>(
     `${API_URL}/actions/fixes/${siteId}`,
-    fetcher
+    fetcher,
   );
   const [generating, setGenerating] = useState(false);
   const [executing, setExecuting] = useState<string | null>(null);
@@ -54,52 +78,45 @@ export default function FixActionsPanel({ siteId }: { siteId: string }) {
   if (!fixes) {
     return (
       <div className="animate-pulse space-y-3">
-        {[1, 2, 3].map((i) => (
-          <div key={i} className="h-20 bg-gray-200 rounded" />
+        {[1, 2, 3].map((item) => (
+          <div key={item} className="h-20 rounded bg-gray-200" />
         ))}
       </div>
     );
   }
 
+  async function post(url: string, body?: JsonRecord) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+    await mutate();
+  }
+
   async function generateFixPlans() {
     setGenerating(true);
     try {
-      await fetch(`${API_URL}/actions/fix-plan-bulk/${siteId}?max_issues=10`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      });
-      mutate();
+      await post(`${API_URL}/actions/fix-plan-bulk/${siteId}?max_issues=10`, {});
     } finally {
       setGenerating(false);
     }
   }
 
   async function approveAction(fixId: string) {
-    await fetch(`${API_URL}/actions/fix/${fixId}/approve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "approve" }),
-    });
-    mutate();
+    await post(`${API_URL}/actions/fix/${fixId}/approve`, { action: "approve" });
   }
 
   async function rejectAction(fixId: string) {
-    await fetch(`${API_URL}/actions/fix/${fixId}/approve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "reject" }),
-    });
-    mutate();
+    await post(`${API_URL}/actions/fix/${fixId}/approve`, { action: "reject" });
   }
 
   async function executeAction(fixId: string) {
     setExecuting(fixId);
     try {
-      await fetch(`${API_URL}/actions/fix/${fixId}/execute`, {
-        method: "POST",
-      });
-      mutate();
+      await post(`${API_URL}/actions/fix/${fixId}/execute`);
     } finally {
       setExecuting(null);
     }
@@ -108,33 +125,28 @@ export default function FixActionsPanel({ siteId }: { siteId: string }) {
   async function approveAndExecute(fixId: string) {
     setExecuting(fixId);
     try {
-      await fetch(`${API_URL}/actions/approve-and-execute/${fixId}`, {
-        method: "POST",
-      });
-      mutate();
+      await post(`${API_URL}/actions/approve-and-execute/${fixId}`);
     } finally {
       setExecuting(null);
     }
   }
 
-  const pending = fixes.filter((f) => f.status === "pending");
-  const approved = fixes.filter((f) => f.status === "approved");
-  const completed = fixes.filter((f) => f.status === "completed");
-  const failed = fixes.filter((f) => f.status === "failed" || f.status === "rejected");
+  const pending = fixes.filter((fix) => fix.status === "pending");
+  const approved = fixes.filter((fix) => fix.status === "approved");
+  const completed = fixes.filter((fix) => fix.status === "completed");
+  const failed = fixes.filter((fix) => ["failed", "rejected"].includes(fix.status));
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">
-          Fix Actions ({fixes.length})
-        </h3>
+      <div className="flex items-center justify-between gap-4">
+        <h3 className="text-lg font-semibold">Fix Actions ({fixes.length})</h3>
         <button
+          type="button"
           onClick={generateFixPlans}
           disabled={generating}
-          className={`px-4 py-2 rounded-md text-sm font-medium ${
+          className={`rounded-md px-4 py-2 text-sm font-medium ${
             generating
-              ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+              ? "cursor-not-allowed bg-gray-100 text-gray-400"
               : "bg-blue-600 text-white hover:bg-blue-700"
           }`}
         >
@@ -142,79 +154,56 @@ export default function FixActionsPanel({ siteId }: { siteId: string }) {
         </button>
       </div>
 
-      {/* Status summary */}
       {fixes.length > 0 && (
-        <div className="flex gap-2 text-xs">
-          <span className="px-2 py-1 rounded bg-yellow-100 text-yellow-800">
-            {pending.length} pending
-          </span>
-          <span className="px-2 py-1 rounded bg-blue-100 text-blue-800">
-            {approved.length} approved
-          </span>
-          <span className="px-2 py-1 rounded bg-green-100 text-green-800">
-            {completed.length} completed
-          </span>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <StatusCount className="bg-yellow-100 text-yellow-800" label="pending" count={pending.length} />
+          <StatusCount className="bg-blue-100 text-blue-800" label="approved" count={approved.length} />
+          <StatusCount className="bg-green-100 text-green-800" label="completed" count={completed.length} />
           {failed.length > 0 && (
-            <span className="px-2 py-1 rounded bg-red-100 text-red-800">
-              {failed.length} failed/rejected
-            </span>
+            <StatusCount className="bg-red-100 text-red-800" label="failed/rejected" count={failed.length} />
           )}
         </div>
       )}
 
-      {/* Empty state */}
       {fixes.length === 0 && (
-        <div className="text-center py-12 text-gray-500">
+        <div className="py-12 text-center text-gray-500">
           <p className="text-lg font-medium">No fix plans yet</p>
-          <p className="text-sm mt-1">
-            Click &quot;Generate Fix Plans&quot; to create automated fixes for your SEO issues.
+          <p className="mt-1 text-sm">
+            Click &quot;Generate Fix Plans&quot; to create reviewed fixes for your SEO issues.
           </p>
         </div>
       )}
 
-      {/* Pending actions */}
-      {pending.length > 0 && (
-        <div className="space-y-3">
-          <h4 className="text-sm font-medium text-gray-700">⏳ Pending Approval</h4>
-          {pending.map((fix) => (
-            <FixCard
-              key={fix.id}
-              fix={fix}
-              onApprove={() => approveAction(fix.id)}
-              onReject={() => rejectAction(fix.id)}
-              onApproveAndExecute={() => approveAndExecute(fix.id)}
-              executing={executing === fix.id}
-            />
-          ))}
-        </div>
-      )}
+      <ActionGroup title="⏳ Pending Approval">
+        {pending.map((fix) => (
+          <FixCard
+            key={fix.id}
+            fix={fix}
+            executing={executing === fix.id}
+            onApprove={() => approveAction(fix.id)}
+            onReject={() => rejectAction(fix.id)}
+            onApproveAndExecute={() => approveAndExecute(fix.id)}
+          />
+        ))}
+      </ActionGroup>
 
-      {/* Approved (ready to execute) */}
-      {approved.length > 0 && (
-        <div className="space-y-3">
-          <h4 className="text-sm font-medium text-gray-700">✅ Approved — Ready to Execute</h4>
-          {approved.map((fix) => (
-            <FixCard
-              key={fix.id}
-              fix={fix}
-              onExecute={() => executeAction(fix.id)}
-              executing={executing === fix.id}
-            />
-          ))}
-        </div>
-      )}
+      <ActionGroup title="✅ Approved — Ready to Execute">
+        {approved.map((fix) => (
+          <FixCard
+            key={fix.id}
+            fix={fix}
+            executing={executing === fix.id}
+            onExecute={() => executeAction(fix.id)}
+          />
+        ))}
+      </ActionGroup>
 
-      {/* Completed */}
-      {completed.length > 0 && (
-        <div className="space-y-3">
-          <h4 className="text-sm font-medium text-gray-700">🎉 Completed</h4>
-          {completed.map((fix) => (
-            <FixCard key={fix.id} fix={fix} />
-          ))}
-        </div>
-      )}
+      <ActionGroup title="🎉 Completed">
+        {completed.map((fix) => (
+          <FixCard key={fix.id} fix={fix} />
+        ))}
+      </ActionGroup>
 
-      {/* Failed/Rejected */}
       {failed.length > 0 && (
         <details className="text-sm text-gray-500">
           <summary className="cursor-pointer hover:text-gray-700">
@@ -231,13 +220,28 @@ export default function FixActionsPanel({ siteId }: { siteId: string }) {
   );
 }
 
+function StatusCount({ className, label, count }: { className: string; label: string; count: number }) {
+  return <span className={`rounded px-2 py-1 ${className}`}>{count} {label}</span>;
+}
+
+function ActionGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  if (!children || (Array.isArray(children) && children.length === 0)) return null;
+
+  return (
+    <div className="space-y-3">
+      <h4 className="text-sm font-medium text-gray-700">{title}</h4>
+      {children}
+    </div>
+  );
+}
+
 function FixCard({
   fix,
   onApprove,
   onReject,
   onExecute,
   onApproveAndExecute,
-  executing,
+  executing = false,
 }: {
   fix: FixAction;
   onApprove?: () => void;
@@ -247,201 +251,119 @@ function FixCard({
   executing?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const content = fix.fix_content || {};
+  const content = fix.fix_content ?? {};
+  const result = fix.execution_result;
+  const filesChanged = asStringArray(result?.files_changed);
+  const hasStructuredContent = [
+    content.affected_url,
+    content.current_value,
+    content.recommended_value,
+    content.instructions,
+    content.file_path,
+  ].some(hasValue);
 
   return (
-    <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
-      {/* Header */}
-      <div
-        className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
-        onClick={() => setExpanded(!expanded)}
+    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+      <button
+        type="button"
+        className="block w-full p-4 text-left transition-colors hover:bg-gray-50"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
       >
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <span className="text-lg shrink-0">{actionTypeIcons[fix.action_type] || "📋"}</span>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="shrink-0 text-lg">{actionTypeIcons[fix.action_type] || "📋"}</span>
             <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span
-                  className={`text-xs px-2 py-0.5 rounded font-medium ${
-                    statusColors[fix.status] || "bg-gray-100 text-gray-800"
-                  }`}
-                >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded px-2 py-0.5 text-xs font-medium ${statusColors[fix.status] || "bg-gray-100 text-gray-800"}`}>
                   {fix.status}
                 </span>
-                <h4 className="font-medium text-sm text-gray-900">{fix.title}</h4>
+                <h4 className="text-sm font-medium text-gray-900">{fix.title}</h4>
               </div>
-              {fix.target_path && (
-                <p className="text-xs text-gray-400 mt-0.5 font-mono truncate">
-                  {fix.target_path}
-                </p>
-              )}
+              {fix.target_path && <p className="mt-0.5 truncate font-mono text-xs text-gray-400">{fix.target_path}</p>}
             </div>
           </div>
-          <span className="text-gray-400 text-xs ml-2 shrink-0">
-            {expanded ? "▲" : "▼"}
-          </span>
+          <span className="shrink-0 text-xs text-gray-400">{expanded ? "▲" : "▼"}</span>
         </div>
+        {fix.description && <p className="mt-2 line-clamp-2 text-sm text-gray-600">{fix.description}</p>}
+      </button>
 
-        {fix.description && (
-          <p className="text-sm text-gray-600 mt-2 line-clamp-2">{fix.description}</p>
-        )}
-      </div>
-
-      {/* Expanded details */}
       {expanded && (
         <div className="border-t border-gray-100">
-          {/* Fix content - human-readable */}
-          {(content.affected_url || content.current_value || content.recommended_value || content.instructions) && (
-            <div className="px-4 py-3 space-y-3 bg-gray-50">
-              {content.affected_url && (
-                <div>
-                  <span className="text-xs font-medium text-gray-500 uppercase">Affected URL</span>
-                  <p className="text-sm font-mono text-gray-800 mt-0.5">{String(content.affected_url)}</p>
-                </div>
-              )}
-              {content.current_value && (
-                <div>
-                  <span className="text-xs font-medium text-gray-500 uppercase">Current (Problem)</span>
-                  <p className="text-sm text-red-700 bg-red-50 px-2 py-1 rounded mt-0.5">{String(content.current_value)}</p>
-                </div>
-              )}
-              {content.recommended_value && (
-                <div>
-                  <span className="text-xs font-medium text-gray-500 uppercase">Recommended Fix</span>
-                  <p className="text-sm text-green-700 bg-green-50 px-2 py-1 rounded mt-0.5">{String(content.recommended_value)}</p>
-                </div>
-              )}
-              {content.instructions && (
-                <div>
-                  <span className="text-xs font-medium text-gray-500 uppercase">Instructions</span>
-                  <div className="text-sm text-gray-700 mt-1 whitespace-pre-wrap bg-white border border-gray-200 rounded p-3">
-                    {String(content.instructions)}
-                  </div>
-                </div>
-              )}
-              {content.file_path && (
-                <div>
-                  <span className="text-xs font-medium text-gray-500 uppercase">Target File</span>
-                  <p className="text-sm font-mono text-gray-600 mt-0.5">{String(content.file_path)}</p>
-                </div>
-              )}
+          {hasStructuredContent && (
+            <div className="space-y-3 bg-gray-50 px-4 py-3">
+              <Detail label="Affected URL" value={content.affected_url} monospace />
+              <Detail label="Current (Problem)" value={content.current_value} tone="danger" />
+              <Detail label="Recommended Fix" value={content.recommended_value} tone="success" />
+              <Detail label="Instructions" value={content.instructions} tone="neutral" preserveWhitespace />
+              <Detail label="Target File" value={content.file_path} monospace />
             </div>
           )}
 
-          {/* Legacy: raw JSON for old fix plans without structured content */}
-          {!content.instructions && !content.current_value && !content.recommended_value && fix.fix_content && (
-            <div className="px-4 py-3 bg-gray-50">
+          {!hasStructuredContent && fix.fix_content && (
+            <div className="bg-gray-50 px-4 py-3">
               <details className="text-xs">
                 <summary className="cursor-pointer text-gray-500 hover:text-gray-700">View raw fix data</summary>
-                <pre className="mt-2 overflow-auto max-h-40 text-xs font-mono text-gray-600">
+                <pre className="mt-2 max-h-40 overflow-auto font-mono text-xs text-gray-600">
                   {JSON.stringify(fix.fix_content, null, 2)}
                 </pre>
               </details>
             </div>
           )}
 
-          {/* Execution result */}
-          {fix.execution_result && (
-            <div className="px-4 py-3 border-t border-gray-100">
-              {fix.execution_result.pr_url && (
-                <a
-                  href={String(fix.execution_result.pr_url)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:underline font-medium"
-                >
-                  🔀 View Pull Request
-                </a>
+          {result && (
+            <div className="space-y-2 border-t border-gray-100 px-4 py-3">
+              {hasValue(result.pr_url) && (
+                <ExternalLink href={asText(result.pr_url)} label="🔀 View Pull Request" />
               )}
-              {fix.execution_result.files_changed && (
-                <div className="mt-2">
+              {filesChanged.length > 0 && (
+                <div>
                   <span className="text-xs text-gray-500">Files changed:</span>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {(fix.execution_result.files_changed as string[]).map((f, i) => (
-                      <span key={i} className="text-xs font-mono bg-gray-100 px-1.5 py-0.5 rounded">{f}</span>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {filesChanged.map((file) => (
+                      <span key={file} className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs">{file}</span>
                     ))}
                   </div>
                 </div>
               )}
-              {fix.execution_result.url && (
-                <a
-                  href={String(fix.execution_result.url)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:underline"
-                >
-                  🔗 View updated page
-                </a>
+              {hasValue(result.url) && <ExternalLink href={asText(result.url)} label="🔗 View updated page" />}
+              {result.status === "no_changes" && (
+                <p className="rounded bg-amber-50 px-3 py-2 text-sm text-amber-700">No file changes were produced. Manual review is required.</p>
               )}
-              {fix.execution_result.status === "no_changes" && (
-                <p className="text-sm text-amber-700 bg-amber-50 px-3 py-2 rounded">
-                  ⚠️ Codex ran but made no file changes. The issue may require manual intervention.
-                </p>
+              {result.status === "recommendation" && (
+                <p className="rounded bg-blue-50 px-3 py-2 text-sm text-blue-700">This action is a manual recommendation. Follow the instructions above.</p>
               )}
-              {fix.execution_result.status === "recommendation" && (
-                <p className="text-sm text-blue-700 bg-blue-50 px-3 py-2 rounded">
-                  ℹ️ This is a manual recommendation — follow the instructions above to fix.
-                </p>
-              )}
-              {fix.execution_result.error && (
-                <p className="text-sm text-red-700 bg-red-50 px-3 py-2 rounded">
-                  ❌ {String(fix.execution_result.error)}
-                </p>
+              {hasValue(result.error) && (
+                <p className="rounded bg-red-50 px-3 py-2 text-sm text-red-700">{asText(result.error)}</p>
               )}
             </div>
           )}
 
-          {/* Action buttons */}
           {(onApprove || onReject || onExecute || onApproveAndExecute) && (
-            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-100 bg-white">
-              {onApproveAndExecute && fix.action_type === "github_pr" && (
+            <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 bg-white px-4 py-3">
+              {onApproveAndExecute && (
                 <button
+                  type="button"
                   onClick={onApproveAndExecute}
                   disabled={executing}
-                  className="px-4 py-2 text-sm font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5"
+                  className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
                 >
-                  {executing ? (
-                    <>
-                      <span className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Running Codex...
-                    </>
-                  ) : (
-                    "🤖 Run with Codex"
-                  )}
-                </button>
-              )}
-              {onApproveAndExecute && fix.action_type !== "github_pr" && (
-                <button
-                  onClick={onApproveAndExecute}
-                  disabled={executing}
-                  className="px-4 py-2 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
-                >
-                  {executing ? "Executing..." : "✓ Approve & Execute"}
+                  {executing ? "Executing..." : "Approve & Execute"}
                 </button>
               )}
               {onApprove && (
-                <button
-                  onClick={onApprove}
-                  className="px-3 py-2 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700"
-                >
-                  ✓ Approve
+                <button type="button" onClick={onApprove} className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700">
+                  Approve
                 </button>
               )}
               {onExecute && (
-                <button
-                  onClick={onExecute}
-                  disabled={executing}
-                  className="px-3 py-2 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
-                >
-                  {executing ? "Running..." : "▶ Execute"}
+                <button type="button" onClick={onExecute} disabled={executing} className="rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50">
+                  {executing ? "Executing..." : "Execute"}
                 </button>
               )}
               {onReject && (
-                <button
-                  onClick={onReject}
-                  className="px-3 py-2 text-sm font-medium rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50"
-                >
-                  ✗ Dismiss
+                <button type="button" onClick={onReject} className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                  Reject
                 </button>
               )}
             </div>
@@ -449,5 +371,46 @@ function FixCard({
         </div>
       )}
     </div>
+  );
+}
+
+function Detail({
+  label,
+  value,
+  tone,
+  monospace = false,
+  preserveWhitespace = false,
+}: {
+  label: string;
+  value: unknown;
+  tone?: "danger" | "success" | "neutral";
+  monospace?: boolean;
+  preserveWhitespace?: boolean;
+}) {
+  if (!hasValue(value)) return null;
+
+  const toneClass = tone === "danger"
+    ? "bg-red-50 text-red-700"
+    : tone === "success"
+      ? "bg-green-50 text-green-700"
+      : tone === "neutral"
+        ? "border border-gray-200 bg-white text-gray-700"
+        : "text-gray-800";
+
+  return (
+    <div>
+      <span className="text-xs font-medium uppercase text-gray-500">{label}</span>
+      <div className={`mt-0.5 rounded px-2 py-1 text-sm ${toneClass} ${monospace ? "font-mono" : ""} ${preserveWhitespace ? "whitespace-pre-wrap" : ""}`}>
+        {asText(value)}
+      </div>
+    </div>
+  );
+}
+
+function ExternalLink({ href, label }: { href: string; label: string }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:underline">
+      {label}
+    </a>
   );
 }
