@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-export default function RegisterForm() {
+export default function RegisterForm({ callbackUrl = "/" }: { callbackUrl?: string }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -51,7 +51,7 @@ export default function RegisterForm() {
         return;
       }
 
-      router.push("/");
+      router.push(callbackUrl);
       router.refresh();
     } catch {
       setError("Unable to reach the authentication service");
@@ -84,7 +84,10 @@ export default function RegisterForm() {
         {loading ? "Creating account..." : "Create Account"}
       </button>
       <p className="text-center text-sm text-gray-600">
-        Already registered? <Link href="/login" className="text-blue-600 hover:underline">Sign in</Link>
+        Already registered?{" "}
+        <Link href={`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`} className="text-blue-600 hover:underline">
+          Sign in
+        </Link>
       </p>
     </form>
   );
