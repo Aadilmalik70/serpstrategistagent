@@ -6,6 +6,7 @@ import useSWR from "swr";
 
 import EmptyState from "@/components/dashboard/empty-state";
 import SiteCard from "@/components/dashboard/site-card";
+import WorkspaceSwitcher from "@/components/workspaces/workspace-switcher";
 import { apiFetch } from "@/lib/api";
 
 type SiteSummary = {
@@ -25,15 +26,18 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+      <header className="border-b border-gray-200 bg-white px-6 py-4">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-xl font-bold">SERP Strategist Agent</h1>
-            {session?.workspaceId && (
-              <p className="text-xs text-gray-500">Workspace: {session.workspaceId}</p>
+            {session?.workspaceName && (
+              <p className="text-xs text-gray-500">
+                {session.workspaceName} · {session.workspaceRole}
+              </p>
             )}
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <WorkspaceSwitcher />
             <span className="text-sm text-gray-600">{session?.user?.email}</span>
             <button
               onClick={() => signOut()}
@@ -45,13 +49,13 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-6">
+      <main className="mx-auto max-w-7xl px-6 py-8">
+        <div className="mb-6 flex items-center justify-between">
           <h2 className="text-2xl font-semibold">Your Sites</h2>
-          {canUseApi && (
+          {canUseApi && session?.workspaceRole !== "member" && (
             <Link
               href="/sites/new"
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-medium"
+              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
             >
               Add Site
             </Link>
@@ -59,7 +63,7 @@ export default function Dashboard() {
         </div>
 
         {status === "loading" && (
-          <div className="h-32 bg-gray-200 rounded-lg animate-pulse" />
+          <div className="h-32 animate-pulse rounded-lg bg-gray-200" />
         )}
 
         {status !== "loading" && session?.legacy && (
@@ -75,19 +79,19 @@ export default function Dashboard() {
         )}
 
         {canUseApi && isLoading && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {[1, 2, 3].map((item) => (
-              <div key={item} className="h-32 bg-gray-200 rounded-lg animate-pulse" />
+              <div key={item} className="h-32 animate-pulse rounded-lg bg-gray-200" />
             ))}
           </div>
         )}
 
         {canUseApi && error && (
-          <div className="text-center py-12">
-            <p className="text-red-600 mb-2">Failed to load workspace sites</p>
+          <div className="py-12 text-center">
+            <p className="mb-2 text-red-600">Failed to load workspace sites</p>
             <button
               onClick={() => window.location.reload()}
-              className="text-blue-600 hover:underline text-sm"
+              className="text-sm text-blue-600 hover:underline"
             >
               Retry
             </button>
@@ -97,7 +101,7 @@ export default function Dashboard() {
         {canUseApi && !isLoading && !error && sites?.length === 0 && <EmptyState />}
 
         {canUseApi && !isLoading && !error && Boolean(sites?.length) && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {sites?.map((site) => <SiteCard key={site.id} site={site} />)}
           </div>
         )}
