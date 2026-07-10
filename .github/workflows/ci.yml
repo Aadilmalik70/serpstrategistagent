@@ -80,13 +80,15 @@ jobs:
       AUTH_PASSWORD: ci-password
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+          run_install: false
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22.13.0"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - name: Enable pnpm
-        run: corepack enable
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Lint
