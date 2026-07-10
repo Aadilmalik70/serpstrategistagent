@@ -54,7 +54,11 @@ class Workspace(Base):
     creator = relationship("User", back_populates="created_workspaces")
     memberships = relationship("Membership", back_populates="workspace", cascade="all, delete-orphan")
     invitations = relationship("WorkspaceInvitation", back_populates="workspace", cascade="all, delete-orphan")
-    sites = relationship("Site", back_populates="workspace")
+    sites = relationship(
+        "Site",
+        back_populates="workspace",
+        foreign_keys="Site.workspace_id",
+    )
     integration_credentials = relationship(
         "IntegrationCredential", back_populates="workspace", cascade="all, delete-orphan"
     )
