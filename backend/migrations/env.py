@@ -7,12 +7,25 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.config import get_settings
 from app.database import Base
-from app.models import Site, Page, CrawlSnapshot, JobQueue, AgentRun, Issue  # noqa: F401
+from app.models import (  # noqa: F401
+    AgentRun,
+    CrawlSnapshot,
+    FixAction,
+    IntegrationCredential,
+    Issue,
+    JobQueue,
+    Membership,
+    Page,
+    Site,
+    Subscription,
+    UsageCounter,
+    User,
+    Workspace,
+    WorkspaceInvitation,
+)
 
 config = context.config
 settings = get_settings()
-
-# Override sqlalchemy.url with the app's configured DATABASE_URL
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
 if config.config_file_name is not None:
