@@ -17,6 +17,27 @@ import StatusCodesPanel from "@/components/sites/status-codes-panel";
 import VisualizationPanel from "@/components/sites/visualization-panel";
 import { apiFetch } from "@/lib/api";
 
+type SiteDetail = {
+  id: string;
+  name: string;
+  domain: string;
+  status: string;
+  updated_at: string;
+  page_count: number;
+  issue_count: number;
+  tech_stack?: string | null;
+  github_repo?: string;
+  health_score: number | null;
+  health_grade: string | null;
+  latest_run: {
+    issues_found: number;
+    pages_analyzed: number;
+    summary: string | null;
+    completed_at: string | null;
+  } | null;
+  librecrawl_enabled: boolean;
+};
+
 export default function SiteDetailPage({
   params,
 }: {
@@ -25,7 +46,7 @@ export default function SiteDetailPage({
   const { id } = use(params);
   const { data: session } = useSession();
   const canUseApi = Boolean(session?.accessToken && session.workspaceId);
-  const { data: site, error, mutate } = useSWR(
+  const { data: site, error, mutate } = useSWR<SiteDetail>(
     canUseApi ? `/sites/${id}` : null,
     apiFetch,
   );
