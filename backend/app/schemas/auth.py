@@ -49,6 +49,41 @@ class WorkspaceCreateRequest(BaseModel):
         return normalized
 
 
+class WorkspaceInvitationCreateRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: str = "member"
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
+            raise ValueError("A valid email address is required")
+        return normalized
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str) -> str:
+        if value not in {"admin", "member"}:
+            raise ValueError("Invitation role must be admin or member")
+        return value
+
+
+class WorkspaceInvitationAcceptRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=512)
+
+
+class MembershipRoleUpdateRequest(BaseModel):
+    role: str
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str) -> str:
+        if value not in {"owner", "admin", "member"}:
+            raise ValueError("Membership role must be owner, admin, or member")
+        return value
+
+
 class UserSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -66,6 +101,29 @@ class WorkspaceSummary(BaseModel):
     slug: str
     role: str
     status: str
+
+
+class WorkspaceMemberSummary(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    email: str
+    name: str | None
+    role: str
+    status: str
+    joined_at: datetime
+
+
+class WorkspaceInvitationSummary(BaseModel):
+    id: uuid.UUID
+    email: str
+    role: str
+    status: str
+    expires_at: datetime
+    created_at: datetime
+
+
+class WorkspaceInvitationCreated(WorkspaceInvitationSummary):
+    accept_token: str
 
 
 class AuthResponse(BaseModel):
