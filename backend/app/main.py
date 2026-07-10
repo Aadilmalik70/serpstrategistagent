@@ -8,7 +8,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.database import engine
-from app.routers import actions, agent, auth, chat, crawl, sites, workspaces
+from app.routers import actions, agent, auth, chat, crawl, site_claims, sites, workspaces
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 settings = get_settings()
@@ -61,6 +61,7 @@ async def enforce_governed_execution(request: Request, call_next):
 
 app.include_router(auth.router)
 app.include_router(workspaces.router)
+app.include_router(site_claims.router)
 app.include_router(sites.router)
 app.include_router(crawl.router)
 app.include_router(agent.router)
