@@ -25,7 +25,7 @@ type SiteDetail = {
   updated_at: string;
   page_count: number;
   issue_count: number;
-  tech_stack?: string | null;
+  tech_stack?: string;
   github_repo?: string;
   health_score: number | null;
   health_grade: string | null;
@@ -48,7 +48,7 @@ export default function SiteDetailPage({
   const canUseApi = Boolean(session?.accessToken && session.workspaceId);
   const { data: site, error, mutate } = useSWR<SiteDetail>(
     canUseApi ? `/sites/${id}` : null,
-    apiFetch,
+    (path: string) => apiFetch<SiteDetail>(path),
   );
   const [activeTab, setActiveTab] = useState<
     | "agent"
