@@ -2,64 +2,53 @@
 
 import { FormEvent, useState } from "react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { apiFetch, OperatorApiError } from "@/lib/api";
 
 interface AddSiteFormProps {
   onSuccess: (siteId: string, jobId?: string) => void;
 }
 
+type CreatedSite = { id: string };
+type CrawlJob = { job_id: string };
+
 export default function AddSiteForm({ onSuccess }: AddSiteFormProps) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setLoading(true);
     setError("");
 
-    const formData = new FormData(e.currentTarget);
+    const formData = new FormData(event.currentTarget);
     const domain = formData.get("domain") as string;
     const name = formData.get("name") as string;
 
     try {
-      // Create site
-      const siteRes = await fetch(`${API_URL}/sites`, {
+      const site = await apiFetch<CreatedSite>("/sites", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain, name: name || undefined }),
       });
 
-      if (siteRes.status === 409) {
-        setError("A site with this domain already exists");
-        setLoading(false);
-        return;
-      }
-
-      if (!siteRes.ok) {
-        const err = await siteRes.json().catch(() => ({}));
-        setError(err.detail || "Failed to add site");
-        setLoading(false);
-        return;
-      }
-
-      const site = await siteRes.json();
-
-      // Start crawl
-      const crawlRes = await fetch(`${API_URL}/crawl/site`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ site_id: site.id }),
-      });
-
-      if (crawlRes.ok) {
-        const job = await crawlRes.json();
+      try {
+        const job = await apiFetch<CrawlJob>("/crawl/site", {
+          method: "POST",
+          body: JSON.stringify({ site_id: site.id }),
+        });
         onSuccess(site.id, job.job_id);
-      } else {
-        // Site created but crawl failed - still navigate
+      } catch {
         onSuccess(site.id);
       }
-    } catch {
-      setError("Network error. Please try again.");
+    } catch (requestError) {
+      if (requestError instanceof OperatorApiError) {
+        setError(
+          requestError.status === 409
+            ? "A site with this domain already exists"
+            : requestError.message,
+        );
+      } else {
+        setError("Network error. Please try again.");
+      }
       setLoading(false);
     }
   }
