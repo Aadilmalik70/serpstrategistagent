@@ -5,6 +5,7 @@ declare module "next-auth" {
   interface Session {
     accessToken?: string;
     workspaceId?: string;
+    workspaceName?: string;
     workspaceRole?: string;
     legacy?: boolean;
     user?: {
@@ -20,6 +21,7 @@ declare module "next-auth/jwt" {
   interface JWT {
     accessToken?: string;
     workspaceId?: string;
+    workspaceName?: string;
     workspaceRole?: string;
     legacy?: boolean;
   }
