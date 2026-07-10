@@ -1,18 +1,19 @@
 import uuid
-import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db, async_session_factory
 from app.config import get_settings
-from app.models.site import Site
+from app.database import async_session_factory, get_db
+from app.dependencies.workspace import WorkspaceContext, get_current_workspace, require_workspace_role
 from app.models.crawl_snapshot import CrawlSnapshot
 from app.models.job_queue import JobQueue
-from app.services.crawler import run_crawl
+from app.models.site import Site
 from app.services import librecrawl
+from app.services.crawler import run_crawl
+from app.services.site_service import get_site_by_id
 
 router = APIRouter(prefix="/crawl", tags=["crawl"])
 
@@ -31,10 +32,8 @@ async def _run_crawl_background(site_id: uuid.UUID, domain: str):
     settings = get_settings()
 
     if settings.librecrawl_enabled and await librecrawl.is_available():
-        # Use LibreCrawl's Playwright-based crawler (discovers more pages via JS rendering)
         result = await librecrawl.crawl_and_sync_pages(domain, site_id)
         if "error" not in result:
-            # Also sync issues from the crawl data
             await librecrawl.sync_issues_from_export(site_id, result.get("crawl_id"))
             async with async_session_factory() as db:
                 site = await db.get(Site, site_id)
@@ -42,9 +41,7 @@ async def _run_crawl_background(site_id: uuid.UUID, domain: str):
                     site.status = "ready"
                     await db.commit()
             return
-        # Fall through to basic crawler if LibreCrawl failed
 
-    # Fallback: basic HTTP crawler
     async with async_session_factory() as db:
         await run_crawl(db, site_id, domain)
         site = await db.get(Site, site_id)
@@ -57,46 +54,47 @@ async def _run_crawl_background(site_id: uuid.UUID, domain: str):
 async def start_crawl(
     data: CrawlRequest,
     background_tasks: BackgroundTasks,
+    context: WorkspaceContext = Depends(get_current_workspace),
     db: AsyncSession = Depends(get_db),
 ):
-    # Verify site exists
-    site = await db.get(Site, data.site_id)
+    require_workspace_role(context, "owner", "admin")
+    site = await get_site_by_id(db, data.site_id, context.workspace.id)
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
 
-    # Create job record
-    job = JobQueue(
-        site_id=site.id,
-        job_type="crawl",
-        status="running",
-    )
+    job = JobQueue(site_id=site.id, job_type="crawl", status="running")
     db.add(job)
-
-    # Update site status
     site.status = "crawling"
     await db.commit()
     await db.refresh(job)
 
-    # Start crawl in background
     background_tasks.add_task(_run_crawl_background, site.id, site.domain)
-
     return CrawlResponse(job_id=str(job.id), status="running")
 
 
 @router.get("/{job_id}")
-async def get_crawl_status(job_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    job = await db.get(JobQueue, job_id)
+async def get_crawl_status(
+    job_id: uuid.UUID,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(JobQueue)
+        .join(Site, Site.id == JobQueue.site_id)
+        .where(JobQueue.id == job_id, Site.workspace_id == context.workspace.id)
+    )
+    job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    # Get latest snapshot for this site
-    result = await db.execute(
-        select(CrawlSnapshot)
-        .where(CrawlSnapshot.site_id == job.site_id)
-        .order_by(CrawlSnapshot.started_at.desc())
-        .limit(1)
-    )
-    snapshot = result.scalar_one_or_none()
+    snapshot = (
+        await db.execute(
+            select(CrawlSnapshot)
+            .where(CrawlSnapshot.site_id == job.site_id)
+            .order_by(CrawlSnapshot.started_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
 
     return {
         "job_id": str(job.id),
