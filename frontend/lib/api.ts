@@ -4,11 +4,13 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export class OperatorApiError extends Error {
   status: number;
+  code?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.name = "OperatorApiError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -38,7 +40,18 @@ export async function apiRequest(path: string, options?: RequestInit): Promise<R
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: response.statusText }));
-    throw new OperatorApiError(error.detail || `API error: ${response.status}`, response.status);
+    const detail = error.detail;
+    const message =
+      typeof detail === "string"
+        ? detail
+        : detail && typeof detail === "object" && typeof detail.message === "string"
+          ? detail.message
+          : `API error: ${response.status}`;
+    const code =
+      detail && typeof detail === "object" && typeof detail.code === "string"
+        ? detail.code
+        : undefined;
+    throw new OperatorApiError(message, response.status, code);
   }
   return response;
 }
