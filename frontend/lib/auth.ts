@@ -1,31 +1,112 @@
-import type { NextAuthOptions } from "next-auth";
+import type { NextAuthOptions, User } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+type ApiAuthResponse = {
+  access_token: string;
+  expires_in: number;
+  user: {
+    id: string;
+    email: string;
+    name: string | null;
+    image_url: string | null;
+  };
+  workspace: {
+    id: string;
+    name: string;
+    slug: string;
+    role: string;
+  };
+};
+
+type OperatorUser = User & {
+  accessToken?: string;
+  workspaceId?: string;
+  workspaceRole?: string;
+  legacy?: boolean;
+};
+
+async function authenticateWithApi(email: string, password: string): Promise<OperatorUser | null> {
+  const response = await fetch(`${API_URL}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+    cache: "no-store",
+  });
+
+  if (!response.ok) return null;
+  const data = (await response.json()) as ApiAuthResponse;
+
+  return {
+    id: data.user.id,
+    email: data.user.email,
+    name: data.user.name,
+    image: data.user.image_url,
+    accessToken: data.access_token,
+    workspaceId: data.workspace.id,
+    workspaceRole: data.workspace.role,
+  };
+}
 
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
-      name: "Credentials",
+      name: "Email and password",
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        const validEmail = process.env.AUTH_EMAIL;
-        const validPassword = process.env.AUTH_PASSWORD;
+        const email = credentials?.email?.trim().toLowerCase();
+        const password = credentials?.password;
+        if (!email || !password) return null;
 
-        if (
-          credentials?.email === validEmail &&
-          credentials?.password === validPassword
-        ) {
-          return { id: "1", email: validEmail, name: "Admin" };
+        try {
+          const apiUser = await authenticateWithApi(email, password);
+          if (apiUser) return apiUser;
+        } catch {
+          // Keep the temporary Phase 1 admin fallback available during migration.
+        }
+
+        const validEmail = process.env.AUTH_EMAIL?.trim().toLowerCase();
+        const validPassword = process.env.AUTH_PASSWORD;
+        if (email === validEmail && password === validPassword) {
+          return {
+            id: "legacy-admin",
+            email: validEmail,
+            name: "Admin",
+            legacy: true,
+          } satisfies OperatorUser;
         }
         return null;
       },
     }),
   ],
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user) {
+        const operatorUser = user as OperatorUser;
+        token.sub = operatorUser.id;
+        token.accessToken = operatorUser.accessToken;
+        token.workspaceId = operatorUser.workspaceId;
+        token.workspaceRole = operatorUser.workspaceRole;
+        token.legacy = operatorUser.legacy ?? false;
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      if (session.user) session.user.id = token.sub ?? "";
+      session.accessToken = typeof token.accessToken === "string" ? token.accessToken : undefined;
+      session.workspaceId = typeof token.workspaceId === "string" ? token.workspaceId : undefined;
+      session.workspaceRole = typeof token.workspaceRole === "string" ? token.workspaceRole : undefined;
+      session.legacy = token.legacy === true;
+      return session;
+    },
+  },
   session: {
     strategy: "jwt",
-    maxAge: 24 * 60 * 60, // 24 hours
+    maxAge: 24 * 60 * 60,
   },
   pages: {
     signIn: "/login",
