@@ -1,11 +1,10 @@
 import base64
 import hashlib
 import json
+import os
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
-
-from app.config import get_settings
 
 
 class CredentialVaultError(ValueError):
@@ -48,7 +47,7 @@ class CredentialVault:
 
 
 def get_credential_vault() -> CredentialVault:
-    settings = get_settings()
-    if not settings.credential_encryption_key:
-        raise CredentialVaultError("CREDENTIAL_ENCRYPTION_KEY is not configured")
-    return CredentialVault(settings.credential_encryption_key)
+    master_secret = os.getenv("CREDENTIAL_ENCRYPTION_KEY", "")
+    if not master_secret:
+        raise CredentialVaultError("Credential encryption key is not configured")
+    return CredentialVault(master_secret)
