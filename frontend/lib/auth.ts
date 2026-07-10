@@ -3,6 +3,14 @@ import CredentialsProvider from "next-auth/providers/credentials";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+type WorkspaceSummary = {
+  id: string;
+  name: string;
+  slug: string;
+  role: string;
+  status: string;
+};
+
 type ApiAuthResponse = {
   access_token: string;
   expires_in: number;
@@ -12,17 +20,13 @@ type ApiAuthResponse = {
     name: string | null;
     image_url: string | null;
   };
-  workspace: {
-    id: string;
-    name: string;
-    slug: string;
-    role: string;
-  };
+  workspace: WorkspaceSummary;
 };
 
 type OperatorUser = User & {
   accessToken?: string;
   workspaceId?: string;
+  workspaceName?: string;
   workspaceRole?: string;
   legacy?: boolean;
 };
@@ -45,8 +49,23 @@ async function authenticateWithApi(email: string, password: string): Promise<Ope
     image: data.user.image_url,
     accessToken: data.access_token,
     workspaceId: data.workspace.id,
+    workspaceName: data.workspace.name,
     workspaceRole: data.workspace.role,
   };
+}
+
+async function validateWorkspaceSelection(
+  accessToken: string,
+  workspaceId: string,
+): Promise<WorkspaceSummary | null> {
+  const response = await fetch(`${API_URL}/workspaces`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+  });
+  if (!response.ok) return null;
+
+  const workspaces = (await response.json()) as WorkspaceSummary[];
+  return workspaces.find((workspace) => workspace.id === workspaceId && workspace.status === "active") ?? null;
 }
 
 export const authOptions: NextAuthOptions = {
@@ -84,14 +103,28 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger, session }) {
       if (user) {
         const operatorUser = user as OperatorUser;
         token.sub = operatorUser.id;
         token.accessToken = operatorUser.accessToken;
         token.workspaceId = operatorUser.workspaceId;
+        token.workspaceName = operatorUser.workspaceName;
         token.workspaceRole = operatorUser.workspaceRole;
         token.legacy = operatorUser.legacy ?? false;
+      }
+
+      if (
+        trigger === "update" &&
+        typeof token.accessToken === "string" &&
+        typeof session?.workspaceId === "string"
+      ) {
+        const selected = await validateWorkspaceSelection(token.accessToken, session.workspaceId);
+        if (selected) {
+          token.workspaceId = selected.id;
+          token.workspaceName = selected.name;
+          token.workspaceRole = selected.role;
+        }
       }
       return token;
     },
@@ -99,6 +132,7 @@ export const authOptions: NextAuthOptions = {
       if (session.user) session.user.id = token.sub ?? "";
       session.accessToken = typeof token.accessToken === "string" ? token.accessToken : undefined;
       session.workspaceId = typeof token.workspaceId === "string" ? token.workspaceId : undefined;
+      session.workspaceName = typeof token.workspaceName === "string" ? token.workspaceName : undefined;
       session.workspaceRole = typeof token.workspaceRole === "string" ? token.workspaceRole : undefined;
       session.legacy = token.legacy === true;
       return session;
