@@ -5,7 +5,7 @@ import { signIn } from "next-auth/react";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
-export default function SignInForm() {
+export default function SignInForm({ callbackUrl = "/" }: { callbackUrl?: string }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -26,7 +26,7 @@ export default function SignInForm() {
       setError("Invalid email or password");
       setLoading(false);
     } else {
-      router.push("/");
+      router.push(callbackUrl);
       router.refresh();
     }
   }
@@ -67,7 +67,10 @@ export default function SignInForm() {
       </button>
       <p className="text-center text-sm text-gray-600">
         New to SERP Strategists?{" "}
-        <Link href="/register" className="text-blue-600 hover:underline">
+        <Link
+          href={`/register?callbackUrl=${encodeURIComponent(callbackUrl)}`}
+          className="text-blue-600 hover:underline"
+        >
           Create an account
         </Link>
       </p>
