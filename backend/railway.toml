@@ -4,7 +4,6 @@ dockerfilePath = "Dockerfile"
 
 [deploy]
 preDeployCommand = "cd /app && python -m alembic upgrade head"
-startCommand = "cd /app && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/ready"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"
