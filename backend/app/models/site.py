@@ -17,6 +17,12 @@ class Site(Base):
     workspace_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=True
     )
+    pending_claim_workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
     domain: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="pending", server_default="pending")
@@ -27,6 +33,7 @@ class Site(Base):
     )
     verification_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     verification_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    verification_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Tech detection
@@ -49,7 +56,15 @@ class Site(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    workspace = relationship("Workspace", back_populates="sites")
+    workspace = relationship(
+        "Workspace",
+        back_populates="sites",
+        foreign_keys=[workspace_id],
+    )
+    pending_claim_workspace = relationship(
+        "Workspace",
+        foreign_keys=[pending_claim_workspace_id],
+    )
     integration_credentials = relationship(
         "IntegrationCredential", back_populates="site", cascade="all, delete-orphan"
     )
