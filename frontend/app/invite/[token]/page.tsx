@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { use, useState } from "react";
-import { useSession } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -19,13 +19,18 @@ export default function InvitationPage({ params }: { params: Promise<{ token: st
   const { data: session, status, update } = useSession();
   const [error, setError] = useState("");
   const [accepting, setAccepting] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const [accountMismatch, setAccountMismatch] = useState(false);
 
   const callbackUrl = `/invite/${encodeURIComponent(token)}`;
+  const loginUrl = `/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+  const registerUrl = `/register?callbackUrl=${encodeURIComponent(callbackUrl)}`;
 
   async function acceptInvitation() {
     if (!session?.accessToken) return;
     setAccepting(true);
     setError("");
+    setAccountMismatch(false);
 
     try {
       const response = await fetch(`${API_URL}/workspaces/invitations/accept`, {
@@ -42,10 +47,13 @@ export default function InvitationPage({ params }: { params: Promise<{ token: st
         | null;
 
       if (!response.ok) {
-        setError(
+        const detail =
           body && "detail" in body && typeof body.detail === "string"
             ? body.detail
-            : "Invitation could not be accepted.",
+            : "Invitation could not be accepted.";
+        setError(detail);
+        setAccountMismatch(
+          response.status === 403 || detail.toLowerCase().includes("email address"),
         );
         return;
       }
@@ -60,51 +68,116 @@ export default function InvitationPage({ params }: { params: Promise<{ token: st
     }
   }
 
+  async function switchAccount() {
+    setSwitching(true);
+    await signOut({ callbackUrl: loginUrl });
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-      <div className="w-full max-w-md rounded-lg bg-white p-8 shadow-md">
-        <h1 className="text-center text-2xl font-bold">Workspace invitation</h1>
-        <p className="mt-2 text-center text-sm text-gray-600">
-          Sign in using the exact email address that was invited.
-        </p>
-
-        {status === "loading" && (
-          <div className="mt-8 h-12 animate-pulse rounded-md bg-gray-200" />
-        )}
-
-        {status === "unauthenticated" && (
-          <div className="mt-8 space-y-3">
-            <Link
-              href={`/login?callbackUrl=${encodeURIComponent(callbackUrl)}`}
-              className="block w-full rounded-md bg-blue-600 px-4 py-2 text-center font-medium text-white hover:bg-blue-700"
-            >
-              Sign in to accept
-            </Link>
-            <Link
-              href={`/register?callbackUrl=${encodeURIComponent(callbackUrl)}`}
-              className="block w-full rounded-md border border-gray-300 px-4 py-2 text-center font-medium text-gray-700 hover:bg-gray-50"
-            >
-              Create an account
-            </Link>
+    <div className="operator-grid flex min-h-screen items-center justify-center bg-[#f9f7f3] px-4 py-10 text-[#202020]">
+      <div className="w-full max-w-lg overflow-hidden rounded-[24px] border border-[rgba(32,32,32,0.12)] bg-white">
+        <div className="border-b border-[rgba(32,32,32,0.1)] bg-[#f3f0e8] px-6 py-8 text-center sm:px-10">
+          <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[#202020] text-white">
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M19 8v6M22 11h-6" />
+            </svg>
           </div>
-        )}
+          <p className="mt-5 text-xs font-semibold uppercase tracking-[0.16em] text-[#646464]">
+            Team access
+          </p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.045em] sm:text-4xl">
+            Workspace invitation
+          </h1>
+          <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-[#646464]">
+            Continue with the exact email address selected by the workspace owner.
+          </p>
+        </div>
 
-        {status === "authenticated" && (
-          <div className="mt-8">
-            <p className="rounded-md bg-gray-50 p-3 text-sm text-gray-700">
-              Signed in as <strong>{session.user?.email}</strong>
-            </p>
-            {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
-            <button
-              type="button"
-              onClick={acceptInvitation}
-              disabled={accepting || !session.accessToken}
-              className="mt-4 w-full rounded-md bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {accepting ? "Accepting invitation..." : "Accept invitation"}
-            </button>
-          </div>
-        )}
+        <div className="p-6 sm:p-8">
+          {status === "loading" && (
+            <div className="space-y-3">
+              <div className="h-16 animate-pulse rounded-2xl bg-[#f3f0e8]" />
+              <div className="h-12 animate-pulse rounded-full bg-[#f3f0e8]" />
+            </div>
+          )}
+
+          {status === "unauthenticated" && (
+            <div className="space-y-3">
+              <Link
+                href={loginUrl}
+                className="flex min-h-12 w-full items-center justify-center rounded-full bg-[#ea2804] px-5 text-center text-sm font-semibold text-white transition hover:bg-[#c01f00]"
+              >
+                Sign in to accept
+              </Link>
+              <Link
+                href={registerUrl}
+                className="flex min-h-12 w-full items-center justify-center rounded-full border border-[#202020] px-5 text-center text-sm font-semibold text-[#202020] transition hover:bg-[#202020] hover:text-white"
+              >
+                Create invited account
+              </Link>
+            </div>
+          )}
+
+          {status === "authenticated" && (
+            <div>
+              <div className="rounded-2xl border border-[rgba(32,32,32,0.1)] bg-[#f9f7f3] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#646464]">Currently signed in</p>
+                <p className="mt-2 break-all font-semibold text-[#202020]">{session.user?.email}</p>
+              </div>
+
+              {error && (
+                <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm leading-6 text-red-800">
+                  <p className="font-semibold">
+                    {accountMismatch ? "This invitation belongs to another account" : "Invitation could not be accepted"}
+                  </p>
+                  <p className="mt-1">{error}</p>
+                </div>
+              )}
+
+              {accountMismatch ? (
+                <div className="mt-5 space-y-3">
+                  <button
+                    type="button"
+                    onClick={switchAccount}
+                    disabled={switching}
+                    className="min-h-12 w-full rounded-full bg-[#ea2804] px-5 text-sm font-semibold text-white transition hover:bg-[#c01f00] disabled:opacity-50"
+                  >
+                    {switching ? "Switching account…" : "Switch account"}
+                  </button>
+                  <p className="text-center text-xs leading-5 text-[#646464]">
+                    You will return to this invitation after signing in with the invited email.
+                  </p>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={acceptInvitation}
+                  disabled={accepting || !session.accessToken}
+                  className="mt-5 min-h-12 w-full rounded-full bg-[#ea2804] px-5 text-sm font-semibold text-white transition hover:bg-[#c01f00] disabled:opacity-50"
+                >
+                  {accepting ? "Accepting invitation…" : "Accept invitation"}
+                </button>
+              )}
+
+              {!accountMismatch && (
+                <button
+                  type="button"
+                  onClick={switchAccount}
+                  disabled={switching}
+                  className="mt-3 min-h-11 w-full rounded-full border border-[rgba(32,32,32,0.18)] px-5 text-sm font-semibold text-[#202020] transition hover:border-[#202020] hover:bg-[#202020] hover:text-white disabled:opacity-50"
+                >
+                  {switching ? "Signing out…" : "Use a different account"}
+                </button>
+              )}
+            </div>
+          )}
+
+          <Link href="/" className="mt-6 block text-center text-sm font-semibold text-[#646464] hover:text-[#202020]">
+            Return to dashboard
+          </Link>
+        </div>
       </div>
     </div>
   );
