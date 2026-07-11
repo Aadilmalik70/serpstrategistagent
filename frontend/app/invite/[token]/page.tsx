@@ -70,7 +70,13 @@ export default function InvitationPage({ params }: { params: Promise<{ token: st
 
   async function switchAccount() {
     setSwitching(true);
-    await signOut({ callbackUrl: loginUrl });
+    try {
+      await signOut({ redirect: false });
+      window.location.assign(loginUrl);
+    } catch {
+      setError("Unable to sign out. Refresh the page and try again.");
+      setSwitching(false);
+    }
   }
 
   return (
