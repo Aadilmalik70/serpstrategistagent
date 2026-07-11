@@ -27,6 +27,11 @@ export default function Dashboard() {
   const activeSites = sites?.filter((site) => site.status === "active").length ?? 0;
   const crawlingSites = sites?.filter((site) => site.status === "crawling").length ?? 0;
 
+  async function handleSignOut() {
+    await signOut({ redirect: false });
+    window.location.assign("/login");
+  }
+
   return (
     <div className="min-h-screen bg-[#f9f7f3] text-[#202020]">
       <header className="border-b border-[rgba(32,32,32,0.12)] bg-[#f9f7f3]">
@@ -41,7 +46,7 @@ export default function Dashboard() {
           <div className="flex flex-wrap items-center gap-3">
             <WorkspaceSwitcher />
             <button
-              onClick={() => signOut()}
+              onClick={handleSignOut}
               className="min-h-10 rounded-full px-3 text-sm font-semibold text-[#646464] transition hover:bg-[#f3f0e8] hover:text-[#202020]"
             >
               Sign out
