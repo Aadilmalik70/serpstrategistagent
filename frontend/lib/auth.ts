@@ -65,6 +65,10 @@ type GitHubEmail = {
   visibility: string | null;
 };
 
+type GitHubEmailLookup =
+  | { email: string; reason: "ok" }
+  | { email: null; reason: "permission" | "unverified" | "unavailable" };
+
 function applyApiAuth(user: OperatorUser, data: ApiAuthResponse) {
   user.id = data.user.id;
   user.email = data.user.email;
@@ -99,8 +103,8 @@ async function authenticateWithApi(email: string, password: string): Promise<Ope
   return user;
 }
 
-async function verifiedGitHubEmail(accessToken: string): Promise<string | null> {
-  const response = await fetch("https://api.github.com/user/emails", {
+async function verifiedGitHubEmail(accessToken: string): Promise<GitHubEmailLookup> {
+  const response = await fetch("https://api.github.com/user/emails?per_page=100", {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/vnd.github+json",
@@ -109,11 +113,32 @@ async function verifiedGitHubEmail(accessToken: string): Promise<string | null> 
     },
     cache: "no-store",
   });
-  if (!response.ok) return null;
+
+  if (!response.ok) {
+    const grantedScopes = response.headers.get("x-oauth-scopes") || "";
+    const hasEmailScope = grantedScopes
+      .split(",")
+      .map((scope) => scope.trim())
+      .some((scope) => scope === "user" || scope === "user:email");
+
+    console.warn("GitHub email lookup failed", {
+      status: response.status,
+      hasEmailScope,
+    });
+
+    return {
+      email: null,
+      reason: !hasEmailScope || response.status === 403 ? "permission" : "unavailable",
+    };
+  }
 
   const emails = (await response.json()) as GitHubEmail[];
-  const verified = emails.filter((item) => item.verified);
-  return (verified.find((item) => item.primary) ?? verified[0])?.email?.toLowerCase() ?? null;
+  const verified = emails.filter(
+    (item) => item.verified && typeof item.email === "string" && item.email.includes("@"),
+  );
+  const email = (verified.find((item) => item.primary) ?? verified[0])?.email?.toLowerCase();
+
+  return email ? { email, reason: "ok" } : { email: null, reason: "unverified" };
 }
 
 async function exchangeOAuthWithApi(input: {
@@ -236,9 +261,19 @@ export const authOptions: NextAuthOptions = {
           name = googleProfile.name ?? user.name;
           imageUrl = googleProfile.picture ?? user.image;
         } else {
-          if (!account.access_token) return "/login?error=OAuthEmailUnavailable";
-          email = await verifiedGitHubEmail(account.access_token);
-          emailVerified = Boolean(email);
+          if (!account.access_token) return "/login?error=GitHubEmailUnavailable";
+          const lookup = await verifiedGitHubEmail(account.access_token);
+          if (!lookup.email) {
+            if (lookup.reason === "permission") {
+              return "/login?error=GitHubEmailPermission";
+            }
+            if (lookup.reason === "unverified") {
+              return "/login?error=GitHubEmailUnverified";
+            }
+            return "/login?error=GitHubEmailUnavailable";
+          }
+          email = lookup.email;
+          emailVerified = true;
           name = profile?.name ?? user.name;
           imageUrl = user.image;
         }
