@@ -16,6 +16,7 @@ from app.models.identity import (
 from app.models.integration_credential import IntegrationCredential
 from app.models.billing import StripeWebhookEvent, Subscription, UsageCounter, UsageEvent
 from app.models.onboarding import OnboardingState
+from app.models.google_data_connection import GoogleDataConnection
 
 __all__ = [
     "Site",
@@ -37,4 +38,5 @@ __all__ = [
     "UsageEvent",
     "StripeWebhookEvent",
     "OnboardingState",
+    "GoogleDataConnection",
 ]
