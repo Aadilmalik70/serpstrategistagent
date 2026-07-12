@@ -12,6 +12,9 @@ type GoogleConnection = {
   gsc_property: string | null;
   ga4_property_id: string | null;
   ga4_property_name: string | null;
+  baseline_status: string;
+  baseline_summary: Record<string, unknown>;
+  last_synced_at: string | null;
   connected_at: string | null;
   last_refreshed_at: string | null;
   last_error: string | null;
@@ -31,7 +34,14 @@ type PropertyCatalog = {
 
 type OAuthStart = { authorization_url: string };
 
-export default function GoogleDataStep({ onReady }: { onReady?: () => void }) {
+function metric(summary: Record<string, unknown>, source: string, key: string) {
+  const sourceValue = summary[source];
+  if (!sourceValue || typeof sourceValue !== "object") return null;
+  const value = (sourceValue as Record<string, unknown>)[key];
+  return typeof value === "number" ? value : null;
+}
+
+export default function GoogleDataStep({ onReady }: { onReady?: (connection: GoogleConnection) => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [gscOverride, setGscOverride] = useState<string | null>(null);
@@ -86,13 +96,24 @@ export default function GoogleDataStep({ onReady }: { onReady?: () => void }) {
           ga4_property_name: selectedGa4Name,
         }),
       });
-      await Promise.all([mutateConnection(), mutateCatalog()]);
+      const synced = await apiFetch<GoogleConnection>("/integrations/google-data/sync", {
+        method: "POST",
+      });
+      await Promise.all([mutateConnection(synced, false), mutateCatalog()]);
       setGscOverride(null);
       setGa4Override(null);
-      setMessage("Google data properties saved.");
-      onReady?.();
+      if (synced.baseline_status === "failed") {
+        setMessage(synced.last_error || "Google connected, but the first data check failed.");
+        return;
+      }
+      setMessage(
+        synced.baseline_status === "partial"
+          ? "Google connected. One source verified; review the warning before launch."
+          : "Search Console and Analytics access verified.",
+      );
+      onReady?.(synced);
     } catch (error) {
-      setMessage(error instanceof OperatorApiError ? error.message : "Could not save Google properties.");
+      setMessage(error instanceof OperatorApiError ? error.message : "Could not save or verify Google properties.");
     } finally {
       setBusy(null);
     }
@@ -123,6 +144,10 @@ export default function GoogleDataStep({ onReady }: { onReady?: () => void }) {
       </div>
     );
   }
+
+  const summary = connection?.baseline_summary || {};
+  const clicks = metric(summary, "gsc", "clicks");
+  const sessions = metric(summary, "ga4", "sessions");
 
   return (
     <div className="space-y-5">
@@ -172,14 +197,32 @@ export default function GoogleDataStep({ onReady }: { onReady?: () => void }) {
         </label>
       </div>
 
-      {message && <p className={`text-sm ${message.includes("saved") ? "text-emerald-700" : "text-red-700"}`}>{message}</p>}
+      {connection?.last_synced_at && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl bg-[#f3f0e8] p-4">
+            <p className="text-xs uppercase tracking-[0.12em] text-[#646464]">Validation</p>
+            <p className="mt-1 font-semibold capitalize">{connection.baseline_status}</p>
+          </div>
+          <div className="rounded-2xl bg-[#f3f0e8] p-4">
+            <p className="text-xs uppercase tracking-[0.12em] text-[#646464]">GSC clicks · 28d</p>
+            <p className="mt-1 font-semibold">{clicks ?? "—"}</p>
+          </div>
+          <div className="rounded-2xl bg-[#f3f0e8] p-4">
+            <p className="text-xs uppercase tracking-[0.12em] text-[#646464]">GA4 sessions · 28d</p>
+            <p className="mt-1 font-semibold">{sessions ?? "—"}</p>
+          </div>
+        </div>
+      )}
+
+      {message && <p className={`text-sm ${message.includes("verified") || message.includes("connected") ? "text-emerald-700" : "text-red-700"}`}>{message}</p>}
+      {connection?.last_error && connection.baseline_status !== "ready" && <p className="text-sm text-amber-800">{connection.last_error}</p>}
       <button
         type="button"
         onClick={saveProperties}
         disabled={busy === "save" || !catalog}
         className="min-h-12 rounded-full bg-[#202020] px-6 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
       >
-        {busy === "save" ? "Saving properties…" : connection?.status === "configured" ? "Update Google properties" : "Save Google properties"}
+        {busy === "save" ? "Saving and verifying…" : connection?.status === "configured" ? "Update and verify" : "Save and verify Google data"}
       </button>
     </div>
   );
