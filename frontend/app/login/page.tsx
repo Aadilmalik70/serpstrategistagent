@@ -20,7 +20,9 @@ export default async function LoginPage({
 }) {
   const params = await searchParams;
   const requested = params.callbackUrl;
-  const callbackUrl = requested?.startsWith("/") && !requested.startsWith("//") ? requested : "/";
+  const callbackUrl = requested?.startsWith("/") && !requested.startsWith("//")
+    ? requested
+    : "/onboarding";
   const googleEnabled = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
   const githubEnabled = Boolean(process.env.GITHUB_ID && process.env.GITHUB_SECRET);
   const oauthError = params.error ? oauthErrorMessages[params.error] : undefined;
