@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, String, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -40,13 +40,11 @@ class Site(Base):
     tech_stack: Mapped[str | None] = mapped_column(String(50), nullable=True)
     cms: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
-    # Legacy integration metadata. Secret fields are deprecated and will be removed
-    # after existing prototype credentials have been invalidated or migrated.
+    # Non-secret legacy metadata retained only for migration compatibility. All credentials
+    # now live in encrypted IntegrationCredential records.
     github_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    github_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
     wordpress_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     wordpress_user: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    wordpress_app_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Site context for content generation
     site_context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -73,3 +71,13 @@ class Site(Base):
     agent_runs = relationship("AgentRun", back_populates="site", cascade="all, delete-orphan")
     issues = relationship("Issue", back_populates="site", cascade="all, delete-orphan")
     fix_actions = relationship("FixAction", back_populates="site", cascade="all, delete-orphan")
+
+    @property
+    def github_token(self) -> None:
+        """Compatibility shim: plaintext GitHub tokens were permanently removed in migration 007."""
+        return None
+
+    @property
+    def wordpress_app_password(self) -> None:
+        """Compatibility shim: plaintext WordPress passwords were permanently removed in migration 007."""
+        return None
