@@ -15,6 +15,7 @@ from app.models.identity import (
 )
 from app.models.integration_credential import IntegrationCredential
 from app.models.billing import StripeWebhookEvent, Subscription, UsageCounter, UsageEvent
+from app.models.onboarding import OnboardingState
 
 __all__ = [
     "Site",
@@ -35,4 +36,5 @@ __all__ = [
     "UsageCounter",
     "UsageEvent",
     "StripeWebhookEvent",
+    "OnboardingState",
 ]
