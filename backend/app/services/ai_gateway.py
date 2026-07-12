@@ -65,7 +65,7 @@ def _request_parts(
         if not messages:
             raise AIGatewayError("messages are required for chat completions", status_code=400)
         return (
-            "/chat/completions",
+            "chat/completions",
             {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             {"model": model, "messages": messages},
         )
@@ -73,7 +73,7 @@ def _request_parts(
         if not messages:
             raise AIGatewayError("messages are required for Anthropic messages", status_code=400)
         return (
-            "/messages",
+            "messages",
             {
                 "x-api-key": api_key,
                 "anthropic-version": "2023-06-01",
@@ -85,7 +85,7 @@ def _request_parts(
         if not input_text:
             raise AIGatewayError("input_text is required for responses", status_code=400)
         return (
-            "/responses",
+            "responses",
             {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             {"model": model, "input": input_text},
         )
@@ -114,7 +114,6 @@ async def request_ai(
     owns_client = client is None
     if client is None:
         client = httpx.AsyncClient(
-            base_url=settings.ai_gateway_base_url,
             timeout=httpx.Timeout(settings.ai_gateway_timeout_seconds, connect=5.0),
             follow_redirects=False,
         )
@@ -130,8 +129,9 @@ async def request_ai(
                 input_text=input_text,
                 max_tokens=max_tokens,
             )
+            url = f"{settings.ai_gateway_base_url}/{path}"
             try:
-                response = await client.post(path, headers=headers, json=payload)
+                response = await client.post(url, headers=headers, json=payload)
             except httpx.TimeoutException:
                 last_error = AIGatewayError("AI gateway request timed out", retryable=True)
                 continue
