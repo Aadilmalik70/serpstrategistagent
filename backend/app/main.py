@@ -15,6 +15,7 @@ from app.routers import (
     billing,
     chat,
     crawl,
+    github_repository,
     google_data,
     integrations,
     onboarding,
@@ -97,6 +98,7 @@ app.include_router(billing.router)
 app.include_router(onboarding.router)
 app.include_router(google_data.router)
 app.include_router(google_data.callback_router)
+app.include_router(github_repository.router)
 app.include_router(integrations.router)
 app.include_router(site_claims.router)
 app.include_router(sites.router)
