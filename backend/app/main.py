@@ -15,6 +15,7 @@ from app.routers import (
     billing,
     chat,
     crawl,
+    github_app,
     github_repository,
     google_data,
     integrations,
@@ -98,6 +99,8 @@ app.include_router(billing.router)
 app.include_router(onboarding.router)
 app.include_router(google_data.router)
 app.include_router(google_data.callback_router)
+app.include_router(github_app.router)
+app.include_router(github_app.callback_router)
 app.include_router(github_repository.router)
 app.include_router(integrations.router)
 app.include_router(site_claims.router)
@@ -110,7 +113,6 @@ app.include_router(chat.router)
 
 @app.get("/health", tags=["system"])
 async def health():
-    """Liveness check: the API process can accept requests."""
     return {
         "status": "ok",
         "service": "serp-strategists-api",
@@ -121,14 +123,13 @@ async def health():
 
 @app.get("/ready", tags=["system"])
 async def readiness():
-    """Readiness check for database and optional Redis dependencies."""
     checks: dict[str, str] = {}
 
     try:
         async with engine.connect() as connection:
             await connection.execute(text("SELECT 1"))
         checks["database"] = "ok"
-    except Exception as exc:  # pragma: no cover - exact driver errors vary by environment
+    except Exception as exc:
         checks["database"] = f"error:{type(exc).__name__}"
 
     if settings.redis_url:
@@ -136,7 +137,7 @@ async def readiness():
         try:
             await redis.ping()
             checks["redis"] = "ok"
-        except Exception as exc:  # pragma: no cover - exact driver errors vary by environment
+        except Exception as exc:
             checks["redis"] = f"error:{type(exc).__name__}"
         finally:
             await redis.aclose()
