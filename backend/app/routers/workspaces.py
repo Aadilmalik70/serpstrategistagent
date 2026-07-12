@@ -1,13 +1,13 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies.auth import get_current_user
 from app.dependencies.workspace import WorkspaceContext, get_current_workspace, require_workspace_role
-from app.models.identity import Membership, User
+from app.models.identity import Membership, User, WorkspaceInvitation
 from app.schemas.auth import (
     MembershipRoleUpdateRequest,
     WorkspaceCreateRequest,
@@ -19,6 +19,7 @@ from app.schemas.auth import (
     WorkspaceSummary,
 )
 from app.services.auth_service import create_workspace_for_user, list_user_workspaces, workspace_summary
+from app.services.entitlement_service import assert_resource_quota
 from app.services.workspace_management import (
     WorkspaceManagementError,
     accept_workspace_invitation,
@@ -87,6 +88,31 @@ async def invite_member(
     require_workspace_role(context, "owner", "admin")
     if context.membership.role == "admin" and data.role != "member":
         raise HTTPException(status_code=403, detail="Admins can invite members only")
+
+    active_members = int(
+        await db.scalar(
+            select(func.count(Membership.id)).where(
+                Membership.workspace_id == context.workspace.id,
+                Membership.status == "active",
+            )
+        )
+        or 0
+    )
+    pending_invitations = int(
+        await db.scalar(
+            select(func.count(WorkspaceInvitation.id)).where(
+                WorkspaceInvitation.workspace_id == context.workspace.id,
+                WorkspaceInvitation.status == "pending",
+            )
+        )
+        or 0
+    )
+    await assert_resource_quota(
+        db,
+        workspace_id=context.workspace.id,
+        metric="team_members",
+        current=active_members + pending_invitations,
+    )
 
     try:
         invitation, raw_token = await create_workspace_invitation(
