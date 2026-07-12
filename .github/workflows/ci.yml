@@ -49,6 +49,7 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       SECRET_KEY: ci-only-secret-key-with-more-than-thirty-two-characters
       OAUTH_BRIDGE_SECRET: ci-oauth-bridge-secret-with-more-than-thirty-two-characters
+      CREDENTIAL_ENCRYPTION_KEY: ci-credential-encryption-key-with-more-than-thirty-two-characters
       SCHEDULER_ENABLED: "false"
       LIBRECRAWL_ENABLED: "false"
     steps:
