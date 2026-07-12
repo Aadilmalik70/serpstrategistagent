@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,10 +55,15 @@ async def start_google_data_connection(
 
 @callback_router.get("/integrations/google/callback")
 async def google_data_callback(
-    code: str = Query(min_length=1),
-    state: str = Query(min_length=20),
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
+    if error:
+        raise HTTPException(status_code=400, detail=f"Google authorization failed: {error}")
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Google callback is missing code or state")
     try:
         redirect_url = await complete_google_oauth(db, code, state)
     except GoogleDataServiceError as exc:
@@ -72,7 +77,7 @@ async def google_data_properties(
     db: AsyncSession = Depends(get_db),
 ) -> GooglePropertyCatalogResponse:
     connection = await get_connection(db, context.workspace.id, context.user.id)
-    if not connection or connection.status != "connected":
+    if not connection or connection.status not in {"connected", "configured"}:
         raise HTTPException(status_code=409, detail="Connect Google data before selecting properties")
     try:
         gsc, ga4 = await list_google_properties(db, connection)
@@ -89,8 +94,10 @@ async def select_google_data_properties(
 ) -> GoogleDataConnectionResponse:
     require_workspace_role(context, "owner", "admin")
     connection = await get_connection(db, context.workspace.id, context.user.id)
-    if not connection or connection.status != "connected":
+    if not connection or connection.status not in {"connected", "configured"}:
         raise HTTPException(status_code=409, detail="Connect Google data before selecting properties")
+    if not data.gsc_property and not data.ga4_property_id:
+        raise HTTPException(status_code=400, detail="Choose at least one Google property")
 
     try:
         gsc, ga4 = await list_google_properties(db, connection)
@@ -100,18 +107,40 @@ async def select_google_data_properties(
     allowed_gsc = {item.id for item in gsc}
     allowed_ga4 = {item.id: item.name for item in ga4}
     if data.gsc_property and data.gsc_property not in allowed_gsc:
-        raise HTTPException(status_code=400, detail="Selected Search Console property is unavailable")
+        raise HTTPException(status_code=403, detail="Selected Search Console property is unavailable")
     if data.ga4_property_id and data.ga4_property_id not in allowed_ga4:
-        raise HTTPException(status_code=400, detail="Selected GA4 property is unavailable")
+        raise HTTPException(status_code=403, detail="Selected GA4 property is unavailable")
 
     connection.gsc_property = data.gsc_property
     connection.ga4_property_id = data.ga4_property_id
-    connection.ga4_property_name = (
-        allowed_ga4.get(data.ga4_property_id)
-        if data.ga4_property_id
-        else None
-    )
+    connection.ga4_property_name = allowed_ga4.get(data.ga4_property_id or "") or data.ga4_property_name
+    connection.status = "configured"
     connection.last_error = None
     await db.commit()
     await db.refresh(connection)
     return connection_response(connection)
+
+
+@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
+async def disconnect_google_data(
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    require_workspace_role(context, "owner", "admin")
+    connection = await get_connection(db, context.workspace.id, context.user.id)
+    if connection:
+        connection.encrypted_tokens = None
+        connection.token_fingerprint = None
+        connection.oauth_state_hash = None
+        connection.oauth_state_expires_at = None
+        connection.status = "not_connected"
+        connection.google_email = None
+        connection.scopes = []
+        connection.gsc_property = None
+        connection.ga4_property_id = None
+        connection.ga4_property_name = None
+        connection.last_error = None
+        connection.connected_at = None
+        connection.last_refreshed_at = None
+        await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
