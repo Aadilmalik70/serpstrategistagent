@@ -48,59 +48,9 @@ class ProviderSpec:
     fields: tuple[ProviderField, ...]
 
 
+# This catalog contains only customer-owned connections. Shared AI and SERP
+# providers are configured server-side and must never create workspace records.
 PROVIDER_SPECS: dict[str, ProviderSpec] = {
-    "openai": ProviderSpec(
-        id="openai",
-        name="OpenAI",
-        description="Use workspace-managed OpenAI models for planning and analysis.",
-        connection_mode="api_key",
-        scope="workspace",
-        available=True,
-        test_supported=True,
-        fields=(
-            ProviderField("api_key", "API key", True, placeholder="sk-…"),
-            ProviderField("organization", "Organization ID", False, False, "org-…"),
-            ProviderField("project", "Project ID", False, False, "proj_…"),
-            ProviderField(
-                "base_url",
-                "API base URL",
-                False,
-                False,
-                "https://api.openai.com",
-                "Leave empty for the official OpenAI API.",
-            ),
-        ),
-    ),
-    "gemini": ProviderSpec(
-        id="gemini",
-        name="Gemini",
-        description="Use the Gemini API for generative analysis and structured outputs.",
-        connection_mode="api_key",
-        scope="workspace",
-        available=True,
-        test_supported=True,
-        fields=(ProviderField("api_key", "API key", True, placeholder="AIza…"),),
-    ),
-    "serpapi": ProviderSpec(
-        id="serpapi",
-        name="SerpApi",
-        description="Fetch Google search results and account-level search usage.",
-        connection_mode="api_key",
-        scope="workspace",
-        available=True,
-        test_supported=True,
-        fields=(ProviderField("api_key", "API key", True),),
-    ),
-    "serper": ProviderSpec(
-        id="serper",
-        name="Serper",
-        description="Run lightweight Google SERP queries through Serper.",
-        connection_mode="api_key",
-        scope="workspace",
-        available=True,
-        test_supported=True,
-        fields=(ProviderField("api_key", "API key", True),),
-    ),
     "wordpress": ProviderSpec(
         id="wordpress",
         name="WordPress",
@@ -215,8 +165,6 @@ def validate_credentials(provider: str, credentials: dict[str, Any]) -> dict[str
 
     if provider == "wordpress":
         normalized["url"] = _normalize_url(normalized["url"], "WordPress URL")
-    if provider == "openai" and normalized.get("base_url"):
-        normalized["base_url"] = _normalize_url(normalized["base_url"], "OpenAI base URL")
     return normalized
 
 
@@ -230,14 +178,7 @@ def safe_metadata(provider: str, credentials: dict[str, str]) -> dict[str, Any]:
         secret = credentials[secret_name]
         metadata["secret_hint"] = f"••••{secret[-4:]}" if len(secret) >= 4 else "••••"
 
-    if provider == "openai":
-        if credentials.get("organization"):
-            metadata["organization"] = credentials["organization"]
-        if credentials.get("project"):
-            metadata["project"] = credentials["project"]
-        if credentials.get("base_url"):
-            metadata["base_url"] = credentials["base_url"]
-    elif provider == "wordpress":
+    if provider == "wordpress":
         metadata["url"] = credentials["url"]
         metadata["username"] = credentials["username"]
     return metadata
@@ -468,41 +409,10 @@ async def revoke_integration(
     await db.commit()
 
 
-def _openai_models_url(base_url: str) -> str:
-    normalized = base_url.rstrip("/")
-    return f"{normalized}/models" if normalized.endswith("/v1") else f"{normalized}/v1/models"
-
-
 async def _test_provider_connection(provider: str, payload: dict[str, Any]) -> tuple[str, str]:
     timeout = httpx.Timeout(10.0, connect=5.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
-        if provider == "openai":
-            headers = {"Authorization": f"Bearer {payload['api_key']}"}
-            if payload.get("organization"):
-                headers["OpenAI-Organization"] = payload["organization"]
-            if payload.get("project"):
-                headers["OpenAI-Project"] = payload["project"]
-            response = await client.get(
-                _openai_models_url(payload.get("base_url", "https://api.openai.com")),
-                headers=headers,
-            )
-        elif provider == "gemini":
-            response = await client.get(
-                "https://generativelanguage.googleapis.com/v1beta/models",
-                params={"key": payload["api_key"], "pageSize": 1},
-            )
-        elif provider == "serpapi":
-            response = await client.get(
-                "https://serpapi.com/account.json",
-                params={"api_key": payload["api_key"]},
-            )
-        elif provider == "serper":
-            response = await client.post(
-                "https://google.serper.dev/search",
-                headers={"X-API-KEY": payload["api_key"], "Content-Type": "application/json"},
-                json={"q": "SERP Strategists", "num": 1},
-            )
-        elif provider == "wordpress":
+        if provider == "wordpress":
             response = await client.get(
                 f"{payload['url'].rstrip('/')}/wp-json/wp/v2/users/me",
                 params={"context": "edit"},
