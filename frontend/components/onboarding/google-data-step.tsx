@@ -43,7 +43,7 @@ export default function GoogleDataStep({ onReady }: { onReady?: () => void }) {
     isLoading,
   } = useSWR<GoogleConnection>("/integrations/google-data/status", apiFetch);
 
-  const connected = connection?.status === "connected";
+  const connected = connection?.status === "connected" || connection?.status === "configured";
   const { data: catalog, mutate: mutateCatalog } = useSWR<PropertyCatalog>(
     connected ? "/integrations/google-data/properties" : null,
     apiFetch,
@@ -129,8 +129,10 @@ export default function GoogleDataStep({ onReady }: { onReady?: () => void }) {
       <div className="rounded-[20px] border border-emerald-200 bg-emerald-50 p-5 text-emerald-950">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700">Google connected</p>
-            <p className="mt-1 break-all font-semibold">{connection.google_email || "Authorized Google account"}</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700">
+              {connection?.status === "configured" ? "Google properties configured" : "Google connected"}
+            </p>
+            <p className="mt-1 break-all font-semibold">{connection?.google_email || "Authorized Google account"}</p>
           </div>
           <button type="button" onClick={connectGoogle} className="min-h-10 rounded-full border border-emerald-300 px-4 text-sm font-semibold">
             Reconnect
@@ -177,7 +179,7 @@ export default function GoogleDataStep({ onReady }: { onReady?: () => void }) {
         disabled={busy === "save" || !catalog}
         className="min-h-12 rounded-full bg-[#202020] px-6 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
       >
-        {busy === "save" ? "Saving properties…" : "Save Google properties"}
+        {busy === "save" ? "Saving properties…" : connection?.status === "configured" ? "Update Google properties" : "Save Google properties"}
       </button>
     </div>
   );
