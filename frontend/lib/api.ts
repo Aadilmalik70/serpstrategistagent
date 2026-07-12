@@ -17,12 +17,7 @@ export class OperatorApiError extends Error {
 export async function apiRequest(path: string, options?: RequestInit): Promise<Response> {
   const session = await getSession();
   if (!session?.accessToken || !session.workspaceId) {
-    throw new OperatorApiError(
-      session?.legacy
-        ? "This temporary admin session cannot access tenant-scoped APIs. Sign in with a registered account."
-        : "Authentication is required.",
-      401,
-    );
+    throw new OperatorApiError("Authentication is required.", 401);
   }
 
   const headers = new Headers(options?.headers);
