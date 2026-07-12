@@ -1,7 +1,7 @@
 "use client";
 
 import { useSession } from "next-auth/react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import useSWR from "swr";
 
 import CmsConnectorStep from "@/components/onboarding/cms-connector-step";
@@ -55,19 +55,15 @@ export default function OnboardingPage() {
   const [message, setMessage] = useState("");
   const [localStep, setLocalStep] = useState<StepId | null>(null);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const requestedStep = params.get("step");
-    if (isStep(requestedStep)) setLocalStep(requestedStep);
-    const googleError = params.get("google_error");
-    if (googleError) setMessage(`Google connection failed: ${googleError.replaceAll("_", " ")}`);
-  }, []);
-
-  const currentStep = localStep || data?.current_step || "profile";
+  const query = typeof window === "undefined" ? null : new URLSearchParams(window.location.search);
+  const requestedStep = query?.get("step") ?? null;
+  const googleError = query?.get("google_error") ?? null;
+  const currentStep = localStep || (isStep(requestedStep) ? requestedStep : null) || data?.current_step || "profile";
   const currentIndex = steps.findIndex((item) => item.id === currentStep);
   const answers = data?.answers?.[currentStep] || {};
   const siteAnswers = data?.answers?.site || {};
   const siteId = typeof siteAnswers.site_id === "string" ? siteAnswers.site_id : "";
+  const visibleMessage = message || (googleError ? `Google connection failed: ${googleError.replaceAll("_", " ")}` : "");
 
   const reviewDetails = useMemo(() => {
     const profile = data?.answers?.profile || {};
@@ -100,6 +96,7 @@ export default function OnboardingPage() {
     });
     await mutate(updated, false);
     setLocalStep(updated.current_step);
+    window.history.replaceState({}, "", `/onboarding?step=${updated.current_step}`);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -244,7 +241,7 @@ export default function OnboardingPage() {
           </div>
 
           <div className="p-6 sm:p-10">
-            {message && <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{message}</div>}
+            {visibleMessage && <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{visibleMessage}</div>}
 
             {currentStep === "review" ? (
               <div>
