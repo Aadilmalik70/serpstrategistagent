@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useState } from "react";
 import useSWR from "swr";
 
+import GoogleDataStep from "@/components/onboarding/google-data-step";
 import { apiFetch, OperatorApiError } from "@/lib/api";
 
 type StepId = "profile" | "site" | "cms" | "google" | "goals" | "review";
@@ -53,6 +55,25 @@ export default function OnboardingPage() {
   const currentIndex = steps.findIndex((item) => item.id === currentStep);
   const answers = data?.answers?.[currentStep] || {};
 
+  async function persistStep(
+    step: StepId,
+    values: Record<string, unknown>,
+    target: StepId = nextStep(step),
+  ) {
+    const updated = await apiFetch<OnboardingState>("/onboarding/step", {
+      method: "PUT",
+      body: JSON.stringify({
+        step,
+        answers: values,
+        complete_step: true,
+        next_step: target,
+      }),
+    });
+    await mutate(updated, false);
+    setLocalStep(updated.current_step);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   async function saveStep(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
@@ -62,26 +83,14 @@ export default function OnboardingPage() {
 
     for (const [key, value] of form.entries()) {
       if (key === "priorities") {
-        const priorities = form.getAll("priorities").map(String);
-        values.priorities = priorities;
+        values.priorities = form.getAll("priorities").map(String);
       } else {
         values[key] = String(value);
       }
     }
 
     try {
-      const updated = await apiFetch<OnboardingState>("/onboarding/step", {
-        method: "PUT",
-        body: JSON.stringify({
-          step: currentStep,
-          answers: values,
-          complete_step: true,
-          next_step: nextStep(currentStep),
-        }),
-      });
-      await mutate(updated, false);
-      setLocalStep(updated.current_step);
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      await persistStep(currentStep, values);
     } catch (requestError) {
       setMessage(requestError instanceof OperatorApiError ? requestError.message : "Could not save this step.");
     } finally {
@@ -93,19 +102,21 @@ export default function OnboardingPage() {
     setSaving(true);
     setMessage("");
     try {
-      const updated = await apiFetch<OnboardingState>("/onboarding/step", {
-        method: "PUT",
-        body: JSON.stringify({
-          step: currentStep,
-          answers: { skipped: true },
-          complete_step: true,
-          next_step: nextStep(currentStep),
-        }),
-      });
-      await mutate(updated, false);
-      setLocalStep(updated.current_step);
+      await persistStep(currentStep, { skipped: true });
     } catch (requestError) {
       setMessage(requestError instanceof OperatorApiError ? requestError.message : "Could not skip this step.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function completeGoogleStep() {
+    setSaving(true);
+    setMessage("");
+    try {
+      await persistStep("google", { connected: true }, "goals");
+    } catch (requestError) {
+      setMessage(requestError instanceof OperatorApiError ? requestError.message : "Could not save Google data setup.");
     } finally {
       setSaving(false);
     }
@@ -184,6 +195,9 @@ export default function OnboardingPage() {
               );
             })}
           </div>
+          <Link href="/" className="mt-6 inline-flex text-sm font-semibold text-[#646464] hover:text-[#202020]">
+            Save and exit →
+          </Link>
         </aside>
 
         <section className="overflow-hidden rounded-[24px] border border-[rgba(32,32,32,0.12)] bg-white">
@@ -220,6 +234,14 @@ export default function OnboardingPage() {
                   {saving ? "Launching…" : "Launch my growth operator"}
                 </button>
               </div>
+            ) : currentStep === "google" ? (
+              <div>
+                <GoogleDataStep onReady={completeGoogleStep} />
+                <div className="mt-6 flex flex-col-reverse gap-3 border-t border-[rgba(32,32,32,0.1)] pt-6 sm:flex-row sm:items-center sm:justify-between">
+                  <button type="button" onClick={() => setLocalStep("cms")} disabled={saving} className="min-h-11 rounded-full border border-[rgba(32,32,32,0.18)] px-5 text-sm font-semibold disabled:opacity-40">Back</button>
+                  <button type="button" onClick={skipStep} disabled={saving} className="min-h-11 rounded-full px-5 text-sm font-semibold text-[#646464]">Skip for now</button>
+                </div>
+              </div>
             ) : (
               <form onSubmit={saveStep} className="space-y-5">
                 {currentStep === "profile" && (
@@ -247,39 +269,37 @@ export default function OnboardingPage() {
                 )}
 
                 {currentStep === "cms" && (
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <ConnectorCard name="cms" value="github" title="GitHub" description="For Next.js, React and custom repositories." defaultChecked={answers.cms === "github"} />
-                    <ConnectorCard name="cms" value="wordpress" title="WordPress" description="For WordPress sites using application passwords." defaultChecked={answers.cms === "wordpress"} />
-                  </div>
-                )}
-
-                {currentStep === "google" && (
-                  <div className="rounded-[20px] border border-[rgba(32,32,32,0.1)] bg-[#f9f7f3] p-6">
-                    <p className="text-lg font-semibold">Google Search Console + GA4</p>
-                    <p className="mt-2 text-sm leading-6 text-[#646464]">The secure OAuth connector is being wired next. Saving this step preserves your place through the redirect.</p>
-                    <input type="hidden" name="connection_intent" value="google_search_and_analytics" />
-                  </div>
+                  <>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <ConnectorCard name="cms" value="github" title="GitHub" description="For Next.js, React and custom repositories." defaultChecked={answers.cms === "github"} />
+                      <ConnectorCard name="cms" value="wordpress" title="WordPress" description="For WordPress sites using application passwords." defaultChecked={answers.cms === "wordpress"} />
+                    </div>
+                    <div className="rounded-2xl border border-[rgba(32,32,32,0.1)] bg-[#f9f7f3] p-4 text-sm leading-6 text-[#646464]">
+                      Save your preferred CMS now. After onboarding, the operator opens the matching secure connection screen; credentials never live in onboarding state.
+                    </div>
+                  </>
                 )}
 
                 {currentStep === "goals" && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {["Increase organic traffic", "Fix technical SEO", "Grow AI-search visibility", "Increase conversions", "Recover declining rankings", "Publish programmatic SEO", "Track competitors"].map((goal) => (
-                      <label key={goal} className="flex cursor-pointer items-center gap-3 rounded-2xl border border-[rgba(32,32,32,0.12)] p-4 hover:bg-[#f9f7f3]">
-                        <input type="checkbox" name="priorities" value={goal} defaultChecked={Array.isArray(answers.priorities) && answers.priorities.includes(goal)} className="h-4 w-4" />
-                        <span className="text-sm font-semibold">{goal}</span>
-                      </label>
-                    ))}
-                  </div>
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {["Increase organic traffic", "Fix technical SEO", "Grow AI-search visibility", "Increase conversions", "Recover declining rankings", "Publish programmatic SEO", "Track competitors"].map((goal) => (
+                        <label key={goal} className="flex cursor-pointer items-center gap-3 rounded-2xl border border-[rgba(32,32,32,0.12)] p-4 hover:bg-[#f9f7f3]">
+                          <input type="checkbox" name="priorities" value={goal} defaultChecked={Array.isArray(answers.priorities) && answers.priorities.includes(goal)} className="h-4 w-4" />
+                          <span className="text-sm font-semibold">{goal}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <Field name="main_product" label="Main product or service" defaultValue={answers.main_product} required />
+                    <Field name="target_customer" label="Target customer" defaultValue={answers.target_customer} required />
+                    <Field name="competitors" label="Main competitors" defaultValue={answers.competitors} placeholder="competitor.com, example.com" />
+                  </>
                 )}
 
                 <div className="flex flex-col-reverse gap-3 border-t border-[rgba(32,32,32,0.1)] pt-6 sm:flex-row sm:items-center sm:justify-between">
-                  <button type="button" onClick={() => setLocalStep(previousStep(currentStep))} disabled={currentIndex === 0 || saving} className="min-h-11 rounded-full border border-[rgba(32,32,32,0.18)] px-5 text-sm font-semibold disabled:opacity-40">
-                    Back
-                  </button>
+                  <button type="button" onClick={() => setLocalStep(previousStep(currentStep))} disabled={currentIndex === 0 || saving} className="min-h-11 rounded-full border border-[rgba(32,32,32,0.18)] px-5 text-sm font-semibold disabled:opacity-40">Back</button>
                   <div className="flex flex-col gap-3 sm:flex-row">
-                    {(currentStep === "cms" || currentStep === "google") && (
-                      <button type="button" onClick={skipStep} disabled={saving} className="min-h-11 rounded-full px-5 text-sm font-semibold text-[#646464]">Skip for now</button>
-                    )}
+                    {currentStep === "cms" && <button type="button" onClick={skipStep} disabled={saving} className="min-h-11 rounded-full px-5 text-sm font-semibold text-[#646464]">Skip for now</button>}
                     <button disabled={saving} className="min-h-12 rounded-full bg-[#ea2804] px-6 text-sm font-semibold text-white hover:bg-[#c01f00] disabled:opacity-50">
                       {saving ? "Saving…" : "Save and continue"}
                     </button>
