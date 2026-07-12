@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -35,6 +36,44 @@ class LoginRequest(BaseModel):
     @classmethod
     def normalize_email(cls, value: str) -> str:
         return value.strip().lower()
+
+
+class OAuthExchangeRequest(BaseModel):
+    provider: Literal["google", "github"]
+    provider_account_id: str = Field(min_length=1, max_length=255)
+    email: str = Field(min_length=3, max_length=320)
+    email_verified: bool
+    name: str | None = Field(default=None, max_length=255)
+    image_url: str | None = Field(default=None, max_length=2048)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
+            raise ValueError("A valid email address is required")
+        return normalized
+
+    @field_validator("provider_account_id")
+    @classmethod
+    def normalize_provider_account_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Provider account ID is required")
+        return normalized
+
+    @field_validator("name", "image_url")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class OAuthLinkConfirmRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=512)
+    password: str = Field(min_length=1, max_length=128)
 
 
 class WorkspaceCreateRequest(BaseModel):
@@ -132,6 +171,20 @@ class AuthResponse(BaseModel):
     expires_in: int
     user: UserSummary
     workspace: WorkspaceSummary
+
+
+class OAuthLinkRequiredResponse(BaseModel):
+    link_required: Literal[True] = True
+    link_token: str
+    email: str
+    expires_in: int
+
+
+class OAuthProviderSummary(BaseModel):
+    provider: str
+    email: str
+    linked_at: datetime
+    last_login_at: datetime
 
 
 class MeResponse(BaseModel):
