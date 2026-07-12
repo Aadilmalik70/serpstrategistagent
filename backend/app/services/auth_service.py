@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.models.billing import Subscription
 from app.models.identity import Membership, User, Workspace
 from app.schemas.auth import RegisterRequest, WorkspaceSummary
+from app.services.entitlement_service import get_plan_entitlements
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
@@ -104,12 +105,7 @@ async def create_workspace_for_user(
         workspace_id=workspace.id,
         plan="audit",
         status="active",
-        entitlements={
-            "sites": 1,
-            "monthly_crawl_pages": 500,
-            "ai_prompts": 0,
-            "team_members": 1,
-        },
+        entitlements=get_plan_entitlements("audit"),
     )
     db.add_all([membership, subscription])
 

@@ -13,6 +13,7 @@ from app.models.job_queue import JobQueue
 from app.models.site import Site
 from app.services import librecrawl
 from app.services.crawler import run_crawl
+from app.services.entitlement_service import assert_usage_quota, effective_entitlements, record_usage
 from app.services.site_service import get_site_by_id
 
 router = APIRouter(prefix="/crawl", tags=["crawl"])
@@ -27,27 +28,57 @@ class CrawlResponse(BaseModel):
     status: str
 
 
-async def _run_crawl_background(site_id: uuid.UUID, domain: str):
-    """Run crawl in background. Uses LibreCrawl if available, falls back to basic crawler."""
+async def _run_crawl_background(
+    workspace_id: uuid.UUID,
+    site_id: uuid.UUID,
+    domain: str,
+    max_pages: int,
+):
+    """Run a bounded crawl and record the actual pages consumed against the workspace period."""
     settings = get_settings()
+    pages_crawled = 0
 
     if settings.librecrawl_enabled and await librecrawl.is_available():
-        result = await librecrawl.crawl_and_sync_pages(domain, site_id)
+        result = await librecrawl.crawl_and_sync_pages(domain, site_id, max_pages=max_pages)
         if "error" not in result:
+            pages_crawled = int(result.get("pages_synced") or 0)
             await librecrawl.sync_issues_from_export(site_id, result.get("crawl_id"))
             async with async_session_factory() as db:
                 site = await db.get(Site, site_id)
                 if site:
                     site.status = "ready"
-                    await db.commit()
+                if pages_crawled > 0:
+                    await record_usage(
+                        db,
+                        workspace_id=workspace_id,
+                        site_id=site_id,
+                        metric="monthly_crawl_pages",
+                        quantity=pages_crawled,
+                        purpose="site_crawl",
+                        details={"adapter": "librecrawl"},
+                        commit=False,
+                    )
+                await db.commit()
             return
 
     async with async_session_factory() as db:
-        await run_crawl(db, site_id, domain)
+        snapshot = await run_crawl(db, site_id, domain, max_pages=max_pages)
+        pages_crawled = int(snapshot.pages_crawled or 0)
         site = await db.get(Site, site_id)
         if site:
             site.status = "ready"
-            await db.commit()
+        if pages_crawled > 0:
+            await record_usage(
+                db,
+                workspace_id=workspace_id,
+                site_id=site_id,
+                metric="monthly_crawl_pages",
+                quantity=pages_crawled,
+                purpose="site_crawl",
+                details={"adapter": "basic"},
+                commit=False,
+            )
+        await db.commit()
 
 
 @router.post("/site", response_model=CrawlResponse)
@@ -62,13 +93,29 @@ async def start_crawl(
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
 
+    subscription, _, current = await assert_usage_quota(
+        db,
+        workspace_id=context.workspace.id,
+        metric="monthly_crawl_pages",
+        requested=1,
+    )
+    limit = int(effective_entitlements(subscription)["monthly_crawl_pages"])
+    remaining = max(0, limit - current)
+    max_pages = min(100, remaining)
+
     job = JobQueue(site_id=site.id, job_type="crawl", status="running")
     db.add(job)
     site.status = "crawling"
     await db.commit()
     await db.refresh(job)
 
-    background_tasks.add_task(_run_crawl_background, site.id, site.domain)
+    background_tasks.add_task(
+        _run_crawl_background,
+        context.workspace.id,
+        site.id,
+        site.domain,
+        max_pages,
+    )
     return CrawlResponse(job_id=str(job.id), status="running")
 
 

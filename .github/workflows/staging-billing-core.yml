@@ -1,0 +1,136 @@
+name: Staging billing core
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/staging-billing-core.yml
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  billing-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      API_URL: https://serpstrategistagent-production.up.railway.app
+      WEB_URL: https://web-production-53a7a.up.railway.app
+    steps:
+      - name: Wait for deployed Phase 2B
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            health=$(curl -fsS "$API_URL/health" || true)
+            version=$(jq -r '.version // empty' <<<"$health" 2>/dev/null || true)
+            if [ "$version" = "0.5.0" ]; then
+              exit 0
+            fi
+            echo "Waiting for backend 0.5.0 ($attempt/30), current=${version:-unavailable}"
+            sleep 10
+          done
+          exit 1
+
+      - name: Run live billing checks
+        id: smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          health=$(curl -fsS "$API_URL/health")
+          ready=$(curl -fsS "$API_URL/ready")
+          web_health=$(curl -fsS "$WEB_URL/api/health")
+          jq -e '.status == "ok" and .version == "0.5.0"' <<<"$health" >/dev/null
+          jq -e '.status == "ready" and .checks.database == "ok"' <<<"$ready" >/dev/null
+          jq -e '.status == "ok"' <<<"$web_health" >/dev/null
+
+          email="billing-core-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com"
+          password="billing-core-password-2026"
+          registration=$(curl -fsS -X POST "$API_URL/auth/register" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -nc --arg email "$email" --arg password "$password" '{email:$email,password:$password,name:"Billing Core",workspace_name:"Billing Core"}')")
+          token=$(jq -r '.access_token' <<<"$registration")
+          workspace_id=$(jq -r '.workspace.id' <<<"$registration")
+          echo "::add-mask::$token"
+          auth=(-H "Authorization: Bearer $token" -H "X-Workspace-ID: $workspace_id")
+
+          summary=$(curl -fsS "$API_URL/billing/summary" "${auth[@]}")
+          plans=$(curl -fsS "$API_URL/billing/plans" "${auth[@]}")
+          jq -e '.plan == "audit" and .stripe_configured == true' <<<"$summary" >/dev/null
+          jq -e 'map(.id) == ["audit","growth","scale"]' <<<"$plans" >/dev/null
+
+          checkout=$(curl -fsS -X POST "$API_URL/billing/checkout" "${auth[@]}" \
+            -H 'Content-Type: application/json' --data '{"plan":"growth"}')
+          checkout_url=$(jq -r '.url' <<<"$checkout")
+          case "$checkout_url" in https://*.stripe.com/*) ;; *) exit 1 ;; esac
+          echo "::add-mask::$checkout_url"
+          printf '%s' "$checkout_url" > checkout-link.txt
+
+          portal=$(curl -fsS -X POST "$API_URL/billing/portal" "${auth[@]}")
+          portal_url=$(jq -r '.url' <<<"$portal")
+          case "$portal_url" in https://*.stripe.com/*) ;; *) exit 1 ;; esac
+
+          first_domain="billing-core-first-${GITHUB_RUN_ID}.example.com"
+          second_domain="billing-core-second-${GITHUB_RUN_ID}.example.com"
+          code=$(curl -sS -o /tmp/first-site.json -w '%{http_code}' -X POST "$API_URL/sites" "${auth[@]}" \
+            -H 'Content-Type: application/json' --data "{\"domain\":\"$first_domain\",\"name\":\"First\"}")
+          test "$code" = "201"
+          code=$(curl -sS -o /tmp/second-site.json -w '%{http_code}' -X POST "$API_URL/sites" "${auth[@]}" \
+            -H 'Content-Type: application/json' --data "{\"domain\":\"$second_domain\",\"name\":\"Second\"}")
+          test "$code" = "402"
+          jq -e '.detail.code == "quota_exceeded" and .detail.metric == "sites"' /tmp/second-site.json >/dev/null
+
+          code=$(curl -sS -o /tmp/first-invite.json -w '%{http_code}' -X POST "$API_URL/workspaces/invitations" "${auth[@]}" \
+            -H 'Content-Type: application/json' --data "{\"email\":\"first-${GITHUB_RUN_ID}@example.com\",\"role\":\"member\"}")
+          test "$code" = "201"
+          code=$(curl -sS -o /tmp/second-invite.json -w '%{http_code}' -X POST "$API_URL/workspaces/invitations" "${auth[@]}" \
+            -H 'Content-Type: application/json' --data "{\"email\":\"second-${GITHUB_RUN_ID}@example.com\",\"role\":\"member\"}")
+          test "$code" = "402"
+          jq -e '.detail.code == "quota_exceeded" and .detail.metric == "team_members"' /tmp/second-invite.json >/dev/null
+
+          code=$(curl -sS -o /tmp/invalid-webhook.json -w '%{http_code}' -X POST "$API_URL/billing/webhook" \
+            -H 'Content-Type: application/json' -H 'Stripe-Signature: t=1,v1=invalid' \
+            --data '{"id":"evt_invalid","type":"customer.subscription.updated","data":{"object":{}}}')
+          test "$code" = "400"
+
+          jq -n \
+            --arg version "$(jq -r '.version' <<<"$health")" \
+            --arg environment "$(jq -r '.environment' <<<"$health")" \
+            --arg database "$(jq -r '.checks.database' <<<"$ready")" \
+            --arg redis "$(jq -r '.checks.redis' <<<"$ready")" \
+            '{backend_version:$version,environment:$environment,database:$database,redis:$redis,stripe_configured:true,checkout_created:true,portal_created:true,site_quota:true,collaborator_quota:true,invalid_signature_rejected:true}' \
+            > billing-core-result.json
+
+      - name: Post sanitized result
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            let r = { error: 'Core acceptance failed before a result was produced' };
+            if (fs.existsSync('billing-core-result.json')) r = JSON.parse(fs.readFileSync('billing-core-result.json', 'utf8'));
+            const body = `## Railway billing core result\n\n` +
+              `- Backend version: \`${r.backend_version ?? 'unknown'}\`\n` +
+              `- Environment: \`${r.environment ?? 'unknown'}\`\n` +
+              `- Stripe configured: \`${r.stripe_configured ?? false}\`\n` +
+              `- Growth Checkout created: \`${r.checkout_created ?? false}\`\n` +
+              `- Billing portal created: \`${r.portal_created ?? false}\`\n` +
+              `- Site quota enforced: \`${r.site_quota ?? false}\`\n` +
+              `- Collaborator quota enforced: \`${r.collaborator_quota ?? false}\`\n` +
+              `- Invalid webhook signature rejected: \`${r.invalid_signature_rejected ?? false}\`\n\n` +
+              `No Stripe key, signing secret, bearer token, Checkout URL, or portal URL is included.`;
+            await github.rest.issues.createComment({owner: context.repo.owner, repo: context.repo.repo, issue_number: 5, body});
+
+      - name: Upload private Checkout link and result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-billing-core
+          path: |
+            billing-core-result.json
+            checkout-link.txt
+          retention-days: 1
+          if-no-files-found: ignore

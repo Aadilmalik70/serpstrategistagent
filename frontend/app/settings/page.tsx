@@ -19,6 +19,12 @@ type IntegrationSummary = {
   status: string;
 };
 
+type BillingSummary = {
+  plan: "audit" | "growth" | "scale";
+  status: string;
+  usage: Record<string, { used: number; limit: number }>;
+};
+
 export default function SettingsPage() {
   const { data: session } = useSession();
   const { data: providers } = useSWR<LinkedProvider[]>(
@@ -27,6 +33,10 @@ export default function SettingsPage() {
   );
   const { data: integrations } = useSWR<IntegrationSummary[]>(
     session?.accessToken && session.workspaceId ? "/integrations" : null,
+    apiFetch,
+  );
+  const { data: billing } = useSWR<BillingSummary>(
+    session?.accessToken && session.workspaceId ? "/billing/summary" : null,
     apiFetch,
   );
 
@@ -51,13 +61,13 @@ export default function SettingsPage() {
             Settings without hidden state.
           </h1>
           <p className="mt-5 max-w-2xl text-base leading-7 text-[#575757] sm:text-lg">
-            Manage workspace boundaries, provider access and the identity used to approve operator actions.
+            Manage workspace boundaries, provider access, billing capacity and the identity used to approve operator actions.
           </p>
         </div>
       </section>
 
       <main className="mx-auto max-w-6xl space-y-8 px-4 py-8 sm:px-6 sm:py-10 lg:px-8 lg:py-12">
-        <section className="grid gap-5 md:grid-cols-2">
+        <section className="grid gap-5 lg:grid-cols-3">
           <Link
             href="/settings/workspace"
             className="group rounded-[20px] border border-[rgba(32,32,32,0.12)] bg-white p-6 transition hover:-translate-y-0.5 hover:border-[rgba(32,32,32,0.28)] sm:p-8"
@@ -65,7 +75,7 @@ export default function SettingsPage() {
             <div className="grid h-12 w-12 place-items-center rounded-full bg-[#202020] text-white">W</div>
             <p className="mt-7 text-xs font-semibold uppercase tracking-[0.16em] text-[#646464]">Tenancy</p>
             <h2 className="mt-2 text-3xl font-semibold tracking-[-0.045em]">Workspace & team</h2>
-            <p className="mt-3 max-w-md text-sm leading-6 text-[#646464]">
+            <p className="mt-3 text-sm leading-6 text-[#646464]">
               Switch client environments, invite teammates and control owner, admin and member permissions.
             </p>
             <span className="mt-7 inline-flex items-center gap-2 text-sm font-semibold text-[#ea2804]">
@@ -80,13 +90,31 @@ export default function SettingsPage() {
             <div className="grid h-12 w-12 place-items-center rounded-full bg-[#ea2804] text-white">↗</div>
             <p className="mt-7 text-xs font-semibold uppercase tracking-[0.16em] text-white/55">Connections</p>
             <h2 className="mt-2 text-3xl font-semibold tracking-[-0.045em]">Integrations</h2>
-            <p className="mt-3 max-w-md text-sm leading-6 text-white/65">
+            <p className="mt-3 text-sm leading-6 text-white/65">
               Add encrypted provider credentials, test connections, rotate keys and revoke access.
             </p>
             <div className="mt-7 flex items-center justify-between gap-4">
               <span className="text-sm font-semibold text-[#ff6a4d]">Manage integrations →</span>
               <span className="rounded-full border border-white/15 px-3 py-1.5 text-xs text-white/70">
                 {integrations?.length ?? "—"} active
+              </span>
+            </div>
+          </Link>
+
+          <Link
+            href="/settings/billing"
+            className="group rounded-[20px] border border-[#ea2804]/25 bg-[#fff8f5] p-6 transition hover:-translate-y-0.5 hover:border-[#ea2804]/60 sm:p-8"
+          >
+            <div className="grid h-12 w-12 place-items-center rounded-full bg-[#ea2804] text-white">B</div>
+            <p className="mt-7 text-xs font-semibold uppercase tracking-[0.16em] text-[#8c4a3d]">Capacity</p>
+            <h2 className="mt-2 text-3xl font-semibold tracking-[-0.045em]">Billing & usage</h2>
+            <p className="mt-3 text-sm leading-6 text-[#725f5b]">
+              Review plan limits, live provider consumption, Checkout and subscription management.
+            </p>
+            <div className="mt-7 flex items-center justify-between gap-4">
+              <span className="text-sm font-semibold text-[#ea2804]">Manage capacity →</span>
+              <span className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold capitalize text-[#575757]">
+                {billing?.plan ?? "—"}
               </span>
             </div>
           </Link>

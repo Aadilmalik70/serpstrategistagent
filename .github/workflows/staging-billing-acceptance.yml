@@ -1,0 +1,377 @@
+name: Staging billing acceptance
+
+on:
+  push:
+    branches:
+      - phase/02-billing-entitlements
+    paths:
+      - .github/workflows/staging-billing-acceptance.yml
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  billing-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      API_URL: https://serpstrategistagent-production.up.railway.app
+      WEB_URL: https://web-production-53a7a.up.railway.app
+    steps:
+      - name: Wait for Phase 2B deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 24); do
+            health=$(curl -fsS "$API_URL/health" || true)
+            version=$(jq -r '.version // empty' <<<"$health" 2>/dev/null || true)
+            if [ "$version" = "0.5.0" ]; then
+              echo "Phase 2B backend is deployed"
+              exit 0
+            fi
+            echo "Waiting for backend version 0.5.0 ($attempt/24); current=${version:-unavailable}"
+            sleep 10
+          done
+          echo "Phase 2B backend was not deployed to the supplied Railway URL"
+          exit 1
+
+      - name: Verify health and billing configuration
+        id: setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          health=$(curl -fsS "$API_URL/health")
+          ready=$(curl -fsS "$API_URL/ready")
+          web_health=$(curl -fsS "$WEB_URL/api/health")
+          jq -e '.status == "ok" and .version == "0.5.0"' <<<"$health" >/dev/null
+          jq -e '.status == "ready" and .checks.database == "ok"' <<<"$ready" >/dev/null
+          jq -e '.status == "ok"' <<<"$web_health" >/dev/null
+
+          email="billing-acceptance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com"
+          payload=$(jq -nc \
+            --arg email "$email" \
+            '{email:$email,password:"billing-acceptance-password-2026",name:"Billing Acceptance",workspace_name:"Billing Acceptance"}')
+          registration=$(curl -fsS \
+            -X POST "$API_URL/auth/register" \
+            -H 'Content-Type: application/json' \
+            --data "$payload")
+          token=$(jq -r '.access_token // empty' <<<"$registration")
+          workspace_id=$(jq -r '.workspace.id // empty' <<<"$registration")
+          test -n "$token"
+          test -n "$workspace_id"
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+          echo "workspace_id=$workspace_id" >> "$GITHUB_OUTPUT"
+          echo "email=$email" >> "$GITHUB_OUTPUT"
+
+          summary=$(curl -fsS "$API_URL/billing/summary" \
+            -H "Authorization: Bearer $token" \
+            -H "X-Workspace-ID: $workspace_id")
+          plans=$(curl -fsS "$API_URL/billing/plans" \
+            -H "Authorization: Bearer $token" \
+            -H "X-Workspace-ID: $workspace_id")
+          jq -e '.plan == "audit" and .stripe_configured == true and .entitlements.sites == 1' <<<"$summary" >/dev/null
+          jq -e 'map(.id) == ["audit","growth","scale"]' <<<"$plans" >/dev/null
+
+          jq -n \
+            --arg backend_version "$(jq -r '.version' <<<"$health")" \
+            --arg backend_environment "$(jq -r '.environment' <<<"$health")" \
+            --arg database "$(jq -r '.checks.database' <<<"$ready")" \
+            --arg redis "$(jq -r '.checks.redis' <<<"$ready")" \
+            --arg initial_plan "$(jq -r '.plan' <<<"$summary")" \
+            --argjson stripe_configured "$(jq '.stripe_configured' <<<"$summary")" \
+            '{backend_version:$backend_version,backend_environment:$backend_environment,database:$database,redis:$redis,initial_plan:$initial_plan,stripe_configured:$stripe_configured}' \
+            > billing-acceptance-result.json
+
+      - name: Verify Checkout portal and quota boundaries
+        id: api
+        shell: bash
+        env:
+          TOKEN: ${{ steps.setup.outputs.token }}
+          WORKSPACE_ID: ${{ steps.setup.outputs.workspace_id }}
+        run: |
+          set -euo pipefail
+          auth=(-H "Authorization: Bearer $TOKEN" -H "X-Workspace-ID: $WORKSPACE_ID")
+
+          checkout=$(curl -fsS -X POST "$API_URL/billing/checkout" \
+            "${auth[@]}" \
+            -H 'Content-Type: application/json' \
+            --data '{"plan":"growth"}')
+          checkout_url=$(jq -r '.url // empty' <<<"$checkout")
+          test -n "$checkout_url"
+          echo "::add-mask::$checkout_url"
+          checkout_host=$(python -c 'import os,urllib.parse; print(urllib.parse.urlparse(os.environ["URL"]).hostname or "")' URL="$checkout_url" 2>/dev/null || true)
+          if [ -z "$checkout_host" ]; then
+            checkout_host=$(printf '%s' "$checkout_url" | sed -E 's#https://([^/]+).*#\1#')
+          fi
+          case "$checkout_host" in
+            checkout.stripe.com|*.stripe.com) ;;
+            *) echo "Unexpected Checkout host: $checkout_host"; exit 1 ;;
+          esac
+          echo "checkout_url=$checkout_url" >> "$GITHUB_OUTPUT"
+
+          portal=$(curl -fsS -X POST "$API_URL/billing/portal" "${auth[@]}")
+          portal_url=$(jq -r '.url // empty' <<<"$portal")
+          test -n "$portal_url"
+          portal_host=$(printf '%s' "$portal_url" | sed -E 's#https://([^/]+).*#\1#')
+          case "$portal_host" in
+            billing.stripe.com|*.stripe.com) ;;
+            *) echo "Unexpected portal host: $portal_host"; exit 1 ;;
+          esac
+
+          first_domain="billing-first-${GITHUB_RUN_ID}.example.com"
+          second_domain="billing-second-${GITHUB_RUN_ID}.example.com"
+          first_site_status=$(curl -sS -o first-site.json -w '%{http_code}' \
+            -X POST "$API_URL/sites" "${auth[@]}" \
+            -H 'Content-Type: application/json' \
+            --data "{\"domain\":\"$first_domain\",\"name\":\"Billing First\"}")
+          test "$first_site_status" = "201"
+          second_site_status=$(curl -sS -o second-site.json -w '%{http_code}' \
+            -X POST "$API_URL/sites" "${auth[@]}" \
+            -H 'Content-Type: application/json' \
+            --data "{\"domain\":\"$second_domain\",\"name\":\"Billing Second\"}")
+          test "$second_site_status" = "402"
+          jq -e '.detail.code == "quota_exceeded" and .detail.metric == "sites"' second-site.json >/dev/null
+
+          first_invite_status=$(curl -sS -o first-invite.json -w '%{http_code}' \
+            -X POST "$API_URL/workspaces/invitations" "${auth[@]}" \
+            -H 'Content-Type: application/json' \
+            --data "{\"email\":\"first-member-${GITHUB_RUN_ID}@example.com\",\"role\":\"member\"}")
+          test "$first_invite_status" = "201"
+          second_invite_status=$(curl -sS -o second-invite.json -w '%{http_code}' \
+            -X POST "$API_URL/workspaces/invitations" "${auth[@]}" \
+            -H 'Content-Type: application/json' \
+            --data "{\"email\":\"second-member-${GITHUB_RUN_ID}@example.com\",\"role\":\"member\"}")
+          test "$second_invite_status" = "402"
+          jq -e '.detail.code == "quota_exceeded" and .detail.metric == "team_members"' second-invite.json >/dev/null
+
+          invalid_webhook_status=$(curl -sS -o invalid-webhook.json -w '%{http_code}' \
+            -X POST "$API_URL/billing/webhook" \
+            -H 'Content-Type: application/json' \
+            -H 'Stripe-Signature: t=1,v1=invalid' \
+            --data '{"id":"evt_invalid","type":"customer.subscription.updated","data":{"object":{}}}')
+          test "$invalid_webhook_status" = "400"
+
+          jq --arg checkout_host "$checkout_host" \
+             --arg portal_host "$portal_host" \
+             --argjson site_quota true \
+             --argjson collaborator_quota true \
+             --argjson invalid_signature_rejected true \
+             '. + {checkout_created:true,checkout_host:$checkout_host,portal_created:true,portal_host:$portal_host,site_quota:$site_quota,collaborator_quota:$collaborator_quota,invalid_signature_rejected:$invalid_signature_rejected}' \
+             billing-acceptance-result.json > billing-acceptance-result.tmp
+          mv billing-acceptance-result.tmp billing-acceptance-result.json
+
+      - name: Complete Growth Checkout in Stripe test mode
+        id: checkout
+        continue-on-error: true
+        shell: bash
+        env:
+          CHECKOUT_URL: ${{ steps.api.outputs.checkout_url }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/stripe-smoke
+          cd /tmp/stripe-smoke
+          npm init -y >/dev/null 2>&1
+          npm install playwright@1.52.0 >/dev/null 2>&1
+          npx playwright install --with-deps chromium >/dev/null 2>&1
+          cat > checkout.js <<'NODE'
+          const { chromium } = require('playwright');
+          const fs = require('fs');
+
+          async function visibleLocator(page, selectors) {
+            for (const frame of page.frames()) {
+              for (const selector of selectors) {
+                const locator = frame.locator(selector).first();
+                try {
+                  if (await locator.isVisible({ timeout: 700 })) return locator;
+                } catch {}
+              }
+            }
+            return null;
+          }
+
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+            const result = { checkout_page_loaded: false, payment_submitted: false, redirected_to_success: false };
+            try {
+              await page.goto(process.env.CHECKOUT_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+              await page.waitForTimeout(3000);
+              result.checkout_page_loaded = /stripe/i.test(await page.title()) || page.url().includes('stripe.com');
+
+              const cardOption = page.getByText('Card', { exact: true }).first();
+              try { if (await cardOption.isVisible({ timeout: 1000 })) await cardOption.click(); } catch {}
+
+              const cardNumber = await visibleLocator(page, [
+                'input[autocomplete="cc-number"]',
+                'input[name="cardNumber"]',
+                'input[placeholder*="1234"]'
+              ]);
+              const expiry = await visibleLocator(page, [
+                'input[autocomplete="cc-exp"]',
+                'input[name="cardExpiry"]',
+                'input[placeholder*="MM"]'
+              ]);
+              const cvc = await visibleLocator(page, [
+                'input[autocomplete="cc-csc"]',
+                'input[name="cardCvc"]',
+                'input[placeholder*="CVC"]'
+              ]);
+              if (!cardNumber || !expiry || !cvc) throw new Error('Stripe card fields were not found');
+
+              await cardNumber.fill('4242424242424242');
+              await expiry.fill('1234');
+              await cvc.fill('123');
+
+              const name = await visibleLocator(page, [
+                'input[autocomplete="cc-name"]',
+                'input[name="billingName"]',
+                'input[placeholder*="name"]'
+              ]);
+              if (name) await name.fill('Billing Acceptance');
+
+              const postal = await visibleLocator(page, [
+                'input[autocomplete="postal-code"]',
+                'input[name="billingPostalCode"]',
+                'input[placeholder*="ZIP"]',
+                'input[placeholder*="postal"]'
+              ]);
+              if (postal) await postal.fill('110025');
+
+              const submit = page.locator('button[type="submit"]:visible').last();
+              if (!(await submit.count())) throw new Error('Stripe submit button was not found');
+              await submit.click();
+              result.payment_submitted = true;
+              await page.waitForURL(url => url.toString().includes('checkout=success'), { timeout: 90000 });
+              result.redirected_to_success = true;
+            } catch (error) {
+              result.error = String(error && error.message ? error.message : error);
+              await page.screenshot({ path: '/tmp/stripe-smoke/stripe-checkout-failure.png', fullPage: true }).catch(() => {});
+            } finally {
+              fs.writeFileSync('/tmp/stripe-smoke/checkout-browser-result.json', JSON.stringify(result, null, 2));
+              await browser.close();
+            }
+            if (!result.redirected_to_success) process.exit(1);
+          })();
+          NODE
+          node checkout.js
+          cp checkout-browser-result.json "$GITHUB_WORKSPACE/checkout-browser-result.json"
+
+      - name: Verify webhook subscription synchronization
+        id: sync
+        continue-on-error: true
+        shell: bash
+        env:
+          TOKEN: ${{ steps.setup.outputs.token }}
+          WORKSPACE_ID: ${{ steps.setup.outputs.workspace_id }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 18); do
+            summary=$(curl -fsS "$API_URL/billing/summary" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "X-Workspace-ID: $WORKSPACE_ID")
+            plan=$(jq -r '.plan // empty' <<<"$summary")
+            status=$(jq -r '.status // empty' <<<"$summary")
+            if [ "$plan" = "growth" ] && [ "$status" = "active" ]; then
+              jq --arg plan "$plan" --arg status "$status" \
+                 '. + {checkout_completed:true,webhook_subscription_sync:true,synced_plan:$plan,synced_status:$status}' \
+                 billing-acceptance-result.json > billing-acceptance-result.tmp
+              mv billing-acceptance-result.tmp billing-acceptance-result.json
+              exit 0
+            fi
+            echo "Waiting for Stripe webhook synchronization ($attempt/18); plan=$plan status=$status"
+            sleep 10
+          done
+          jq '. + {checkout_completed:false,webhook_subscription_sync:false}' \
+             billing-acceptance-result.json > billing-acceptance-result.tmp
+          mv billing-acceptance-result.tmp billing-acceptance-result.json
+          exit 1
+
+      - name: Build sanitized PR report
+        if: always()
+        shell: bash
+        run: |
+          if [ ! -f billing-acceptance-result.json ]; then
+            echo '{"fatal":"acceptance workflow failed before producing a result"}' > billing-acceptance-result.json
+          fi
+          checkout_outcome="${{ steps.checkout.outcome }}"
+          sync_outcome="${{ steps.sync.outcome }}"
+          jq --arg checkout_outcome "$checkout_outcome" --arg sync_outcome "$sync_outcome" \
+             '. + {checkout_browser_step:$checkout_outcome,subscription_sync_step:$sync_outcome}' \
+             billing-acceptance-result.json > billing-acceptance-result.tmp
+          mv billing-acceptance-result.tmp billing-acceptance-result.json
+
+          backend_version=$(jq -r '.backend_version // "unknown"' billing-acceptance-result.json)
+          environment=$(jq -r '.backend_environment // "unknown"' billing-acceptance-result.json)
+          stripe_configured=$(jq -r '.stripe_configured // false' billing-acceptance-result.json)
+          checkout_created=$(jq -r '.checkout_created // false' billing-acceptance-result.json)
+          portal_created=$(jq -r '.portal_created // false' billing-acceptance-result.json)
+          site_quota=$(jq -r '.site_quota // false' billing-acceptance-result.json)
+          collaborator_quota=$(jq -r '.collaborator_quota // false' billing-acceptance-result.json)
+          invalid_signature=$(jq -r '.invalid_signature_rejected // false' billing-acceptance-result.json)
+          checkout_completed=$(jq -r '.checkout_completed // false' billing-acceptance-result.json)
+          webhook_sync=$(jq -r '.webhook_subscription_sync // false' billing-acceptance-result.json)
+          synced_plan=$(jq -r '.synced_plan // "not verified"' billing-acceptance-result.json)
+
+          cat > billing-acceptance-comment.md <<EOF
+          ## Railway billing acceptance result
+
+          Tested against the deployed Railway backend and frontend.
+
+          - Backend version: \`$backend_version\`
+          - Environment: \`$environment\`
+          - Stripe configuration detected: \`$stripe_configured\`
+          - Growth Checkout Session created: \`$checkout_created\`
+          - Billing portal Session created: \`$portal_created\`
+          - Audit site quota enforced: \`$site_quota\`
+          - Audit collaborator quota enforced: \`$collaborator_quota\`
+          - Invalid webhook signature rejected: \`$invalid_signature\`
+          - Automated Stripe test payment completed: \`$checkout_completed\`
+          - Signed webhook synchronized subscription: \`$webhook_sync\`
+          - Synced plan: \`$synced_plan\`
+
+          No Stripe key, webhook secret, bearer token, Checkout Session URL, or portal URL is included in this report.
+          EOF
+
+      - name: Post sanitized result to PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('billing-acceptance-comment.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 5,
+              body,
+            });
+
+      - name: Upload sanitized diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-billing-acceptance-result
+          path: |
+            billing-acceptance-result.json
+            billing-acceptance-comment.md
+            checkout-browser-result.json
+            /tmp/stripe-smoke/stripe-checkout-failure.png
+          retention-days: 3
+          if-no-files-found: ignore
+
+      - name: Assert core Railway acceptance
+        shell: bash
+        run: |
+          jq -e '
+            .backend_version == "0.5.0" and
+            .stripe_configured == true and
+            .checkout_created == true and
+            .portal_created == true and
+            .site_quota == true and
+            .collaborator_quota == true and
+            .invalid_signature_rejected == true
+          ' billing-acceptance-result.json

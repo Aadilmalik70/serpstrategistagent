@@ -5,8 +5,10 @@ from typing import Any, Literal
 import uuid
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.services.entitlement_service import assert_usage_quota, record_usage
 
 
 AIGatewayEndpoint = Literal["chat_completions", "messages", "responses"]
@@ -92,6 +94,22 @@ def _request_parts(
     raise AIGatewayError("Unsupported AI gateway endpoint", status_code=400)
 
 
+def _usage_token_count(usage: dict[str, Any]) -> int:
+    for key in ("total_tokens", "total_token_count"):
+        value = usage.get(key)
+        if isinstance(value, int) and value >= 0:
+            return value
+
+    total = 0
+    found = False
+    for key in ("input_tokens", "output_tokens", "prompt_tokens", "completion_tokens"):
+        value = usage.get(key)
+        if isinstance(value, int) and value >= 0:
+            total += value
+            found = True
+    return total if found else 0
+
+
 async def request_ai(
     *,
     workspace_id: uuid.UUID,
@@ -103,13 +121,18 @@ async def request_ai(
     model: str | None = None,
     max_tokens: int = 1024,
     client: httpx.AsyncClient | None = None,
+    db: AsyncSession | None = None,
 ) -> AIGatewayResult:
-    """Call the server-managed AI gateway without exposing its key to workspace APIs."""
+    """Call the server-managed AI gateway and meter successful usage when a DB session is supplied."""
     settings = get_settings()
     if not settings.ai_gateway_api_key:
         raise AIGatewayError("AI gateway is not configured", status_code=503)
     if max_tokens <= 0:
         raise AIGatewayError("max_tokens must be greater than zero", status_code=400)
+
+    if db is not None:
+        await assert_usage_quota(db, workspace_id=workspace_id, metric="ai_requests", requested=1)
+        await assert_usage_quota(db, workspace_id=workspace_id, metric="ai_tokens", requested=1)
 
     owns_client = client is None
     if client is None:
@@ -163,7 +186,7 @@ async def request_ai(
                 continue
 
             usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
-            return AIGatewayResult(
+            result = AIGatewayResult(
                 data=data,
                 model=candidate,
                 endpoint=endpoint,
@@ -172,6 +195,37 @@ async def request_ai(
                 purpose=purpose,
                 usage=usage,
             )
+            if db is not None:
+                try:
+                    await record_usage(
+                        db,
+                        workspace_id=workspace_id,
+                        site_id=site_id,
+                        metric="ai_requests",
+                        quantity=1,
+                        purpose=purpose,
+                        details={"model": candidate, "endpoint": endpoint},
+                        commit=False,
+                        enforce_quota=False,
+                    )
+                    token_count = _usage_token_count(usage)
+                    if token_count > 0:
+                        await record_usage(
+                            db,
+                            workspace_id=workspace_id,
+                            site_id=site_id,
+                            metric="ai_tokens",
+                            quantity=token_count,
+                            purpose=purpose,
+                            details={"model": candidate, "endpoint": endpoint},
+                            commit=False,
+                            enforce_quota=False,
+                        )
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+            return result
     finally:
         if owns_client:
             await client.aclose()

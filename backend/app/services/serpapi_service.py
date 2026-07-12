@@ -5,8 +5,10 @@ from typing import Any
 import uuid
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.services.entitlement_service import assert_usage_quota, record_usage
 
 
 class SerpApiError(RuntimeError):
@@ -39,8 +41,9 @@ async def search_serp(
     gl: str | None = None,
     num: int = 10,
     client: httpx.AsyncClient | None = None,
+    db: AsyncSession | None = None,
 ) -> SerpApiResult:
-    """Run a live SERP query using the platform-managed Railway secret."""
+    """Run a live SERP query and meter successful usage when a DB session is supplied."""
     settings = get_settings()
     if not settings.serpapi_api_key:
         raise SerpApiError("SerpAPI is not configured", status_code=503)
@@ -49,6 +52,9 @@ async def search_serp(
         raise SerpApiError("query is required", status_code=400)
     if num < 1 or num > 100:
         raise SerpApiError("num must be between 1 and 100", status_code=400)
+
+    if db is not None:
+        await assert_usage_quota(db, workspace_id=workspace_id, metric="serp_queries", requested=1)
 
     params: dict[str, Any] = {
         "api_key": settings.serpapi_api_key,
@@ -94,8 +100,10 @@ async def search_serp(
             raise SerpApiError("SerpAPI returned invalid JSON", status_code=502) from exc
         if not isinstance(data, dict):
             raise SerpApiError("SerpAPI returned an invalid response shape", status_code=502)
+        if data.get("error"):
+            raise SerpApiError("SerpAPI rejected the search request", status_code=502)
 
-        return SerpApiResult(
+        result = SerpApiResult(
             data=data,
             workspace_id=workspace_id,
             site_id=site_id,
@@ -103,6 +111,28 @@ async def search_serp(
             query=normalized_query,
             engine=engine,
         )
+        if db is not None:
+            try:
+                await record_usage(
+                    db,
+                    workspace_id=workspace_id,
+                    site_id=site_id,
+                    metric="serp_queries",
+                    quantity=1,
+                    purpose=purpose,
+                    details={
+                        "engine": engine,
+                        "result_count": len(data.get("organic_results", []))
+                        if isinstance(data.get("organic_results"), list)
+                        else 0,
+                    },
+                    commit=True,
+                    enforce_quota=False,
+                )
+            except Exception:
+                await db.rollback()
+                raise
+        return result
     finally:
         if owns_client:
             await client.aclose()
