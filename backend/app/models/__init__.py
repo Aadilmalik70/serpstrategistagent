@@ -14,6 +14,7 @@ from app.models.identity import (
     WorkspaceInvitation,
 )
 from app.models.integration_credential import IntegrationCredential
+from app.models.onboarding import GoogleDataConnection, GoogleOAuthState, OnboardingState
 from app.models.billing import StripeWebhookEvent, Subscription, UsageCounter, UsageEvent
 
 __all__ = [
@@ -31,6 +32,9 @@ __all__ = [
     "OAuthIdentity",
     "OAuthLinkIntent",
     "IntegrationCredential",
+    "OnboardingState",
+    "GoogleDataConnection",
+    "GoogleOAuthState",
     "Subscription",
     "UsageCounter",
     "UsageEvent",
