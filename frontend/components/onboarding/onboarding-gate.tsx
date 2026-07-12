@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import useSWR from "swr";
 
 import { apiFetch } from "@/lib/api";
@@ -14,7 +14,7 @@ type OnboardingStatus = {
 
 const PUBLIC_PREFIXES = ["/login", "/register", "/invite", "/auth/"];
 
-export default function OnboardingGate({ children }: { children: React.ReactNode }) {
+export default function OnboardingGate({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { data: session, status: sessionStatus } = useSession();
