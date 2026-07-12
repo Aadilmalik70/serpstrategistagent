@@ -1,14 +1,25 @@
 import uuid
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.site import Site
 from app.models.page import Page
+from app.models.site import Site
 from app.schemas.site import SiteCreate
+from app.services.entitlement_service import assert_resource_quota
 
 
 async def create_site(db: AsyncSession, data: SiteCreate, workspace_id: uuid.UUID) -> Site:
+    current_sites = int(
+        await db.scalar(select(func.count(Site.id)).where(Site.workspace_id == workspace_id)) or 0
+    )
+    await assert_resource_quota(
+        db,
+        workspace_id=workspace_id,
+        metric="sites",
+        current=current_sites,
+    )
+
     name = data.name or data.domain
     site = Site(domain=data.domain, name=name, workspace_id=workspace_id)
     db.add(site)
