@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     serpapi_base_url: str = "https://serpapi.com/search.json"
     serpapi_timeout_seconds: float = 20.0
 
+    # Stripe billing. All values are server-only Railway secrets/configuration.
+    stripe_api_base_url: str = "https://api.stripe.com/v1"
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_growth_price_id: str = ""
+    stripe_scale_price_id: str = ""
+    stripe_timeout_seconds: float = 20.0
+
     # WordPress integration (optional legacy development fallback)
     wordpress_url: str = ""
     wordpress_user: str = ""
@@ -58,7 +66,7 @@ class Settings(BaseSettings):
             return value.replace("postgresql://", "postgresql+asyncpg://", 1)
         return value
 
-    @field_validator("ai_gateway_base_url", "serpapi_base_url")
+    @field_validator("ai_gateway_base_url", "serpapi_base_url", "stripe_api_base_url")
     @classmethod
     def normalize_provider_url(cls, value: str) -> str:
         normalized = value.strip().rstrip("/")
@@ -78,8 +86,16 @@ class Settings(BaseSettings):
                 raise ValueError("FRONTEND_URL must be an absolute URL")
         if self.oauth_bridge_secret and len(self.oauth_bridge_secret) < 32:
             raise ValueError("OAUTH_BRIDGE_SECRET must be at least 32 characters when configured")
-        if self.ai_gateway_timeout_seconds <= 0 or self.serpapi_timeout_seconds <= 0:
+        if (
+            self.ai_gateway_timeout_seconds <= 0
+            or self.serpapi_timeout_seconds <= 0
+            or self.stripe_timeout_seconds <= 0
+        ):
             raise ValueError("Provider timeouts must be greater than zero")
+        if self.stripe_secret_key and not self.stripe_secret_key.startswith(("sk_test_", "sk_live_")):
+            raise ValueError("STRIPE_SECRET_KEY must be a Stripe secret key")
+        if self.stripe_webhook_secret and not self.stripe_webhook_secret.startswith("whsec_"):
+            raise ValueError("STRIPE_WEBHOOK_SECRET must be a Stripe webhook signing secret")
         return self
 
     @computed_field
@@ -87,6 +103,18 @@ class Settings(BaseSettings):
     def allowed_origins(self) -> list[str]:
         configured = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
         return list(dict.fromkeys([self.frontend_url, *configured]))
+
+    @computed_field
+    @property
+    def stripe_price_plan_map(self) -> dict[str, str]:
+        return {
+            price_id: plan
+            for price_id, plan in (
+                (self.stripe_growth_price_id, "growth"),
+                (self.stripe_scale_price_id, "scale"),
+            )
+            if price_id
+        }
 
     model_config = {"env_file": ".env", "extra": "ignore", "case_sensitive": False}
 
