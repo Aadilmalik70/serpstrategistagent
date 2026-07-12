@@ -9,6 +9,8 @@ on:
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
 
 jobs:
   provider-smoke:
@@ -63,12 +65,70 @@ jobs:
           jq . <<<"$response"
           jq . <<<"$response" > provider-smoke-result.json
 
+      - name: Build sanitized PR report
+        if: always()
+        shell: bash
+        run: |
+          if [ -f provider-smoke-result.json ]; then
+            environment=$(jq -r '.environment // "unknown"' provider-smoke-result.json)
+            all_ok=$(jq -r '.all_ok // false' provider-smoke-result.json)
+            ai_ok=$(jq -r '.ai.ok // false' provider-smoke-result.json)
+            ai_model=$(jq -r '.ai.model // "n/a"' provider-smoke-result.json)
+            ai_endpoint=$(jq -r '.ai.endpoint // "n/a"' provider-smoke-result.json)
+            ai_error=$(jq -r '.ai.error // "none"' provider-smoke-result.json)
+            serp_ok=$(jq -r '.serpapi.ok // false' provider-smoke-result.json)
+            serp_status=$(jq -r '.serpapi.search_status // "n/a"' provider-smoke-result.json)
+            serp_count=$(jq -r '.serpapi.organic_result_count // 0' provider-smoke-result.json)
+            serp_error=$(jq -r '.serpapi.error // "none"' provider-smoke-result.json)
+            cat > provider-smoke-comment.md <<EOF
+          ## Live Railway provider smoke result
+
+          Tested against: \`$API_URL\`
+
+          - Environment: \`$environment\`
+          - Overall: \`$all_ok\`
+          - AI gateway: \`$ai_ok\`
+          - AI model: \`$ai_model\`
+          - AI endpoint: \`$ai_endpoint\`
+          - AI error: \`$ai_error\`
+          - SerpAPI: \`$serp_ok\`
+          - SerpAPI status: \`$serp_status\`
+          - Organic results returned: \`$serp_count\`
+          - SerpAPI error: \`$serp_error\`
+
+          No provider key or authorization header is included in this report.
+          EOF
+          else
+            cat > provider-smoke-comment.md <<EOF
+          ## Live Railway provider smoke result
+
+          The staging smoke workflow failed before it produced a provider response. Check this workflow run's failed step. No provider key or authorization header was included.
+          EOF
+          fi
+
+      - name: Post sanitized result to PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('provider-smoke-comment.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 4,
+              body,
+            });
+
       - name: Upload sanitized smoke result
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: staging-provider-smoke-result
-          path: provider-smoke-result.json
+          path: |
+            provider-smoke-result.json
+            provider-smoke-comment.md
           retention-days: 3
           if-no-files-found: warn
 
