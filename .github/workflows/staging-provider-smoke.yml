@@ -1,0 +1,77 @@
+name: Staging provider smoke
+
+on:
+  push:
+    branches:
+      - phase/02-identity-tenancy-billing
+    paths:
+      - .github/workflows/staging-provider-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  provider-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      API_URL: https://serpstrategistagent-production.up.railway.app
+    steps:
+      - name: Confirm deployed smoke route
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            if curl -fsS "$API_URL/openapi.json" | grep -q '/internal/staging/provider-smoke'; then
+              echo "Smoke route is deployed"
+              exit 0
+            fi
+            echo "Waiting for deployed route ($attempt/12)"
+            sleep 5
+          done
+          echo "Smoke route was not found on the deployed API"
+          exit 1
+
+      - name: Register disposable staging owner
+        id: auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          email="provider-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com"
+          payload=$(jq -nc \
+            --arg email "$email" \
+            '{email:$email,password:"provider-smoke-password-2026",name:"Provider Smoke",workspace_name:"Provider Smoke"}')
+          response=$(curl -fsS \
+            -X POST "$API_URL/auth/register" \
+            -H 'Content-Type: application/json' \
+            --data "$payload")
+          token=$(jq -r '.access_token // empty' <<<"$response")
+          workspace_id=$(jq -r '.workspace.id // empty' <<<"$response")
+          test -n "$token"
+          test -n "$workspace_id"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+          echo "workspace_id=$workspace_id" >> "$GITHUB_OUTPUT"
+
+      - name: Call live AI and SerpAPI providers
+        shell: bash
+        run: |
+          set -euo pipefail
+          response=$(curl -fsS \
+            -X POST "$API_URL/internal/staging/provider-smoke" \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
+            -H "X-Workspace-ID: ${{ steps.auth.outputs.workspace_id }}")
+          jq . <<<"$response"
+          jq . <<<"$response" > provider-smoke-result.json
+
+      - name: Upload sanitized smoke result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-provider-smoke-result
+          path: provider-smoke-result.json
+          retention-days: 3
+          if-no-files-found: warn
+
+      - name: Assert both providers passed
+        shell: bash
+        run: jq -e '.all_ok == true and .ai.ok == true and .serpapi.ok == true' provider-smoke-result.json
