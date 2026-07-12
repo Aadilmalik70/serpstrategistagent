@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -32,6 +32,16 @@ class User(Base):
         cascade="all, delete-orphan",
     )
     created_workspaces = relationship("Workspace", back_populates="creator")
+    oauth_identities = relationship(
+        "OAuthIdentity",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    oauth_link_intents = relationship(
+        "OAuthLinkIntent",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class Workspace(Base):
@@ -116,3 +126,48 @@ class WorkspaceInvitation(Base):
 
     workspace = relationship("Workspace", back_populates="invitations")
     invited_by = relationship("User")
+
+
+class OAuthIdentity(Base):
+    __tablename__ = "oauth_identities"
+    __table_args__ = (
+        UniqueConstraint("provider", "provider_account_id", name="uq_oauth_provider_account"),
+        UniqueConstraint("user_id", "provider", name="uq_oauth_user_provider"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=func.gen_random_uuid()
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_account_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_login_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    user = relationship("User", back_populates="oauth_identities")
+
+
+class OAuthLinkIntent(Base):
+    __tablename__ = "oauth_link_intents"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=func.gen_random_uuid()
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_account_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    provider_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    user = relationship("User", back_populates="oauth_link_intents")
