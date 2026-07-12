@@ -3,6 +3,8 @@
 import { SessionProvider, useSession } from "next-auth/react";
 import { useEffect, type ReactNode } from "react";
 
+import OnboardingGate from "@/components/onboarding/onboarding-gate";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 function AuthenticatedApiTransport({ children }: { children: ReactNode }) {
@@ -43,7 +45,9 @@ function AuthenticatedApiTransport({ children }: { children: ReactNode }) {
 export default function Providers({ children }: { children: ReactNode }) {
   return (
     <SessionProvider>
-      <AuthenticatedApiTransport>{children}</AuthenticatedApiTransport>
+      <AuthenticatedApiTransport>
+        <OnboardingGate>{children}</OnboardingGate>
+      </AuthenticatedApiTransport>
     </SessionProvider>
   );
 }

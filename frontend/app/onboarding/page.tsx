@@ -1,9 +1,11 @@
 "use client";
 
 import { useSession } from "next-auth/react";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 
+import CmsConnectorStep from "@/components/onboarding/cms-connector-step";
+import GoogleDataStep from "@/components/onboarding/google-data-step";
 import { apiFetch, OperatorApiError } from "@/lib/api";
 
 type StepId = "profile" | "site" | "cms" | "google" | "goals" | "review";
@@ -29,6 +31,10 @@ const steps: { id: StepId; label: string; eyebrow: string }[] = [
   { id: "review", label: "Launch", eyebrow: "06" },
 ];
 
+function isStep(value: string | null): value is StepId {
+  return steps.some((step) => step.id === value);
+}
+
 function nextStep(step: StepId): StepId {
   const index = steps.findIndex((item) => item.id === step);
   return steps[Math.min(index + 1, steps.length - 1)].id;
@@ -49,9 +55,53 @@ export default function OnboardingPage() {
   const [message, setMessage] = useState("");
   const [localStep, setLocalStep] = useState<StepId | null>(null);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedStep = params.get("step");
+    if (isStep(requestedStep)) setLocalStep(requestedStep);
+    const googleError = params.get("google_error");
+    if (googleError) setMessage(`Google connection failed: ${googleError.replaceAll("_", " ")}`);
+  }, []);
+
   const currentStep = localStep || data?.current_step || "profile";
   const currentIndex = steps.findIndex((item) => item.id === currentStep);
   const answers = data?.answers?.[currentStep] || {};
+  const siteAnswers = data?.answers?.site || {};
+  const siteId = typeof siteAnswers.site_id === "string" ? siteAnswers.site_id : "";
+
+  const reviewDetails = useMemo(() => {
+    const profile = data?.answers?.profile || {};
+    const site = data?.answers?.site || {};
+    const cms = data?.answers?.cms || {};
+    const google = data?.answers?.google || {};
+    const goals = data?.answers?.goals || {};
+    return {
+      profile: String(profile.company_name || profile.full_name || "Not configured"),
+      site: String(site.website_url || site.domain || "Not configured"),
+      cms: cms.skipped ? "Skipped" : String(cms.cms || "Not configured"),
+      google: google.skipped ? "Skipped" : google.connected ? "Connected and verified" : "Not configured",
+      goals: Array.isArray(goals.priorities) ? `${goals.priorities.length} priorities` : "Not configured",
+    };
+  }, [data?.answers]);
+
+  async function persistStep(
+    step: StepId,
+    values: Record<string, unknown>,
+    target: StepId = nextStep(step),
+  ) {
+    const updated = await apiFetch<OnboardingState>("/onboarding/step", {
+      method: "PUT",
+      body: JSON.stringify({
+        step,
+        answers: values,
+        complete_step: true,
+        next_step: target,
+      }),
+    });
+    await mutate(updated, false);
+    setLocalStep(updated.current_step);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   async function saveStep(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -62,28 +112,28 @@ export default function OnboardingPage() {
 
     for (const [key, value] of form.entries()) {
       if (key === "priorities") {
-        const priorities = form.getAll("priorities").map(String);
-        values.priorities = priorities;
+        values.priorities = form.getAll("priorities").map(String);
       } else {
         values[key] = String(value);
       }
     }
 
     try {
-      const updated = await apiFetch<OnboardingState>("/onboarding/step", {
-        method: "PUT",
-        body: JSON.stringify({
-          step: currentStep,
-          answers: values,
-          complete_step: true,
-          next_step: nextStep(currentStep),
-        }),
-      });
-      await mutate(updated, false);
-      setLocalStep(updated.current_step);
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      await persistStep(currentStep, values);
     } catch (requestError) {
       setMessage(requestError instanceof OperatorApiError ? requestError.message : "Could not save this step.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function completeConnectorStep(step: "cms" | "google", values: Record<string, unknown>) {
+    setSaving(true);
+    setMessage("");
+    try {
+      await persistStep(step, values);
+    } catch (requestError) {
+      setMessage(requestError instanceof OperatorApiError ? requestError.message : "Could not save this connection.");
     } finally {
       setSaving(false);
     }
@@ -93,17 +143,10 @@ export default function OnboardingPage() {
     setSaving(true);
     setMessage("");
     try {
-      const updated = await apiFetch<OnboardingState>("/onboarding/step", {
-        method: "PUT",
-        body: JSON.stringify({
-          step: currentStep,
-          answers: { skipped: true },
-          complete_step: true,
-          next_step: nextStep(currentStep),
-        }),
-      });
-      await mutate(updated, false);
-      setLocalStep(updated.current_step);
+      await persistStep(
+        currentStep,
+        currentStep === "cms" ? { cms: "skipped", skipped: true } : { skipped: true },
+      );
     } catch (requestError) {
       setMessage(requestError instanceof OperatorApiError ? requestError.message : "Could not skip this step.");
     } finally {
@@ -115,10 +158,11 @@ export default function OnboardingPage() {
     setSaving(true);
     setMessage("");
     try {
-      await apiFetch<OnboardingState>("/onboarding/complete", {
+      const launched = await apiFetch<OnboardingState>("/onboarding/complete", {
         method: "POST",
         body: JSON.stringify({ launch_operator: true }),
       });
+      await mutate(launched, false);
       window.location.assign("/");
     } catch (requestError) {
       setMessage(requestError instanceof OperatorApiError ? requestError.message : "Could not launch the operator.");
@@ -207,8 +251,11 @@ export default function OnboardingPage() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   {steps.slice(0, -1).map((step) => (
                     <div key={step.id} className="rounded-2xl border border-[rgba(32,32,32,0.1)] bg-[#f9f7f3] p-5">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="font-semibold">{step.label}</p>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold">{step.label}</p>
+                          <p className="mt-1 text-sm text-[#646464]">{reviewDetails[step.id as keyof typeof reviewDetails]}</p>
+                        </div>
                         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${data.completed_steps.includes(step.id) ? "bg-[#2b9a66] text-white" : "bg-[#f3f0e8] text-[#646464]"}`}>
                           {data.completed_steps.includes(step.id) ? "Ready" : "Incomplete"}
                         </span>
@@ -216,9 +263,39 @@ export default function OnboardingPage() {
                     </div>
                   ))}
                 </div>
+                <div className="mt-6 rounded-[20px] bg-[#202020] p-6 text-white">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/55">What launches next</p>
+                  <p className="mt-2 text-xl font-semibold">Initial crawl + Google baseline</p>
+                  <p className="mt-2 text-sm leading-6 text-white/65">The operator queues a bounded first crawl and refreshes the selected GSC and GA4 baseline without blocking this screen.</p>
+                </div>
                 <button onClick={launchOperator} disabled={saving} className="mt-8 min-h-12 w-full rounded-full bg-[#ea2804] px-6 text-sm font-semibold text-white hover:bg-[#c01f00] disabled:opacity-50 sm:w-auto">
                   {saving ? "Launching…" : "Launch my growth operator"}
                 </button>
+              </div>
+            ) : currentStep === "cms" ? (
+              <div className="space-y-6">
+                {siteId ? (
+                  <CmsConnectorStep
+                    siteId={siteId}
+                    initialMode={typeof answers.cms === "string" ? answers.cms : undefined}
+                    onReady={(mode, details) => completeConnectorStep("cms", { cms: mode, ...details })}
+                  />
+                ) : (
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">Complete the website step before connecting a CMS.</div>
+                )}
+                <ConnectorNavigation currentStep={currentStep} saving={saving} onBack={() => setLocalStep(previousStep(currentStep))} onSkip={skipStep} />
+              </div>
+            ) : currentStep === "google" ? (
+              <div className="space-y-6">
+                <GoogleDataStep
+                  onReady={(connection) => completeConnectorStep("google", {
+                    connected: true,
+                    status: connection.baseline_status,
+                    gsc_property: connection.gsc_property,
+                    ga4_property_id: connection.ga4_property_id,
+                  })}
+                />
+                <ConnectorNavigation currentStep={currentStep} saving={saving} onBack={() => setLocalStep(previousStep(currentStep))} onSkip={skipStep} />
               </div>
             ) : (
               <form onSubmit={saveStep} className="space-y-5">
@@ -246,21 +323,6 @@ export default function OnboardingPage() {
                   </>
                 )}
 
-                {currentStep === "cms" && (
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <ConnectorCard name="cms" value="github" title="GitHub" description="For Next.js, React and custom repositories." defaultChecked={answers.cms === "github"} />
-                    <ConnectorCard name="cms" value="wordpress" title="WordPress" description="For WordPress sites using application passwords." defaultChecked={answers.cms === "wordpress"} />
-                  </div>
-                )}
-
-                {currentStep === "google" && (
-                  <div className="rounded-[20px] border border-[rgba(32,32,32,0.1)] bg-[#f9f7f3] p-6">
-                    <p className="text-lg font-semibold">Google Search Console + GA4</p>
-                    <p className="mt-2 text-sm leading-6 text-[#646464]">The secure OAuth connector is being wired next. Saving this step preserves your place through the redirect.</p>
-                    <input type="hidden" name="connection_intent" value="google_search_and_analytics" />
-                  </div>
-                )}
-
                 {currentStep === "goals" && (
                   <div className="grid gap-3 sm:grid-cols-2">
                     {["Increase organic traffic", "Fix technical SEO", "Grow AI-search visibility", "Increase conversions", "Recover declining rankings", "Publish programmatic SEO", "Track competitors"].map((goal) => (
@@ -276,20 +338,26 @@ export default function OnboardingPage() {
                   <button type="button" onClick={() => setLocalStep(previousStep(currentStep))} disabled={currentIndex === 0 || saving} className="min-h-11 rounded-full border border-[rgba(32,32,32,0.18)] px-5 text-sm font-semibold disabled:opacity-40">
                     Back
                   </button>
-                  <div className="flex flex-col gap-3 sm:flex-row">
-                    {(currentStep === "cms" || currentStep === "google") && (
-                      <button type="button" onClick={skipStep} disabled={saving} className="min-h-11 rounded-full px-5 text-sm font-semibold text-[#646464]">Skip for now</button>
-                    )}
-                    <button disabled={saving} className="min-h-12 rounded-full bg-[#ea2804] px-6 text-sm font-semibold text-white hover:bg-[#c01f00] disabled:opacity-50">
-                      {saving ? "Saving…" : "Save and continue"}
-                    </button>
-                  </div>
+                  <button disabled={saving} className="min-h-12 rounded-full bg-[#ea2804] px-6 text-sm font-semibold text-white hover:bg-[#c01f00] disabled:opacity-50">
+                    {saving ? "Saving…" : "Save and continue"}
+                  </button>
                 </div>
               </form>
             )}
           </div>
         </section>
       </main>
+    </div>
+  );
+}
+
+function ConnectorNavigation({ currentStep, saving, onBack, onSkip }: { currentStep: StepId; saving: boolean; onBack: () => void; onSkip: () => void }) {
+  return (
+    <div className="flex flex-col-reverse gap-3 border-t border-[rgba(32,32,32,0.1)] pt-6 sm:flex-row sm:items-center sm:justify-between">
+      <button type="button" onClick={onBack} disabled={saving} className="min-h-11 rounded-full border border-[rgba(32,32,32,0.18)] px-5 text-sm font-semibold disabled:opacity-40">Back</button>
+      <button type="button" onClick={onSkip} disabled={saving} className="min-h-11 rounded-full px-5 text-sm font-semibold text-[#646464] disabled:opacity-50">
+        {saving ? "Saving…" : `Skip ${currentStep === "cms" ? "CMS" : "Google"} for now`}
+      </button>
     </div>
   );
 }
@@ -311,20 +379,6 @@ function Select({ name, label, defaultValue, options }: { name: string; label: s
         <option value="" disabled>Select one</option>
         {options.map((option) => <option key={option} value={option.toLowerCase().replaceAll(" ", "_")}>{option}</option>)}
       </select>
-    </label>
-  );
-}
-
-function ConnectorCard({ name, value, title, description, defaultChecked }: { name: string; value: string; title: string; description: string; defaultChecked: boolean }) {
-  return (
-    <label className="cursor-pointer rounded-[20px] border border-[rgba(32,32,32,0.12)] p-5 transition hover:bg-[#f9f7f3]">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-lg font-semibold">{title}</p>
-          <p className="mt-2 text-sm leading-6 text-[#646464]">{description}</p>
-        </div>
-        <input type="radio" name={name} value={value} defaultChecked={defaultChecked} required className="mt-1 h-4 w-4" />
-      </div>
     </label>
   );
 }
