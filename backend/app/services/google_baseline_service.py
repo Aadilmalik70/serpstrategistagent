@@ -74,7 +74,7 @@ async def sync_google_baseline(
                     "metrics": [
                         {"name": "sessions"},
                         {"name": "activeUsers"},
-                        {"name": "conversions"},
+                        {"name": "keyEvents"},
                     ],
                     "limit": 1,
                 },
@@ -87,7 +87,7 @@ async def sync_google_baseline(
                     "property_name": connection.ga4_property_name,
                     "sessions": _number(values[0].get("value")) if len(values) > 0 else 0,
                     "active_users": _number(values[1].get("value")) if len(values) > 1 else 0,
-                    "conversions": _number(values[2].get("value")) if len(values) > 2 else 0,
+                    "key_events": _number(values[2].get("value")) if len(values) > 2 else 0,
                 }
             else:
                 failures.append(f"Google Analytics returned HTTP {response.status_code}")
