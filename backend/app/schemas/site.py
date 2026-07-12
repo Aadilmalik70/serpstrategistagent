@@ -1,7 +1,18 @@
 import uuid
 from datetime import datetime
-from pydantic import BaseModel, field_validator
 from urllib.parse import urlparse
+
+from pydantic import BaseModel, Field, field_validator
+
+
+def normalize_domain(value: str) -> str:
+    value = value.strip().lower()
+    if not value.startswith(("http://", "https://")):
+        value = f"https://{value}"
+    parsed = urlparse(value)
+    if not parsed.netloc or "." not in parsed.netloc:
+        raise ValueError("Invalid domain format")
+    return parsed.netloc
 
 
 class SiteCreate(BaseModel):
@@ -10,16 +21,30 @@ class SiteCreate(BaseModel):
 
     @field_validator("domain")
     @classmethod
-    def validate_domain(cls, v: str) -> str:
-        v = v.strip().lower()
-        # Add scheme if missing for proper parsing
-        if not v.startswith(("http://", "https://")):
-            v = f"https://{v}"
-        parsed = urlparse(v)
-        if not parsed.netloc or "." not in parsed.netloc:
-            raise ValueError("Invalid domain format")
-        # Return just the netloc (domain without scheme)
-        return parsed.netloc
+    def validate_domain(cls, value: str) -> str:
+        return normalize_domain(value)
+
+
+class SiteDomainRequest(BaseModel):
+    domain: str
+
+    @field_validator("domain")
+    @classmethod
+    def validate_domain(cls, value: str) -> str:
+        return normalize_domain(value)
+
+
+class SiteClaimVerifyRequest(SiteDomainRequest):
+    token: str = Field(min_length=20, max_length=256)
+
+
+class SiteClaimStartResponse(BaseModel):
+    site_id: uuid.UUID
+    domain: str
+    method: str
+    record_name: str
+    record_value: str
+    expires_at: datetime
 
 
 class SiteResponse(BaseModel):

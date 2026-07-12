@@ -1,8 +1,26 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
+  --canvas: #f9f7f3;
+  --surface-bone: #f3f0e8;
+  --surface-card: #ffffff;
+  --surface-dark: #202020;
+  --surface-deep: #000000;
+  --ink: #202020;
+  --body: #3a3a3a;
+  --charcoal: #575757;
+  --mute: #646464;
+  --ash: #8d8d8d;
+  --stone: #bbbbbb;
+  --primary: #ea2804;
+  --primary-deep: #c01f00;
+  --success: #2b9a66;
+  --hairline: rgba(32, 32, 32, 0.12);
+  --hairline-strong: rgba(32, 32, 32, 0.28);
+  --ring-focus: rgba(59, 130, 246, 0.42);
+  --background: var(--canvas);
+  --foreground: var(--ink);
 }
 
 @theme inline {
@@ -12,15 +30,78 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: var(--canvas);
+  color: var(--ink);
+  text-rendering: optimizeLegibility;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100%;
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+input,
+select,
+textarea {
+  color: var(--ink);
+  background-color: var(--surface-card);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ash);
+  opacity: 1;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid var(--ring-focus);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(234, 40, 4, 0.18);
+  color: var(--ink);
+}
+
+.operator-grid {
+  background-image:
+    linear-gradient(rgba(32, 32, 32, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(32, 32, 32, 0.035) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.operator-no-scrollbar {
+  scrollbar-width: none;
+}
+
+.operator-no-scrollbar::-webkit-scrollbar {
+  display: none;
 }

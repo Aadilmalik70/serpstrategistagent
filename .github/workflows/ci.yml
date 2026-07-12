@@ -48,6 +48,8 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/serpstrategist_test
       REDIS_URL: redis://localhost:6379/0
       SECRET_KEY: ci-only-secret-key-with-more-than-thirty-two-characters
+      OAUTH_BRIDGE_SECRET: ci-oauth-bridge-secret-with-more-than-thirty-two-characters
+      CREDENTIAL_ENCRYPTION_KEY: ci-credential-encryption-key-with-more-than-thirty-two-characters
       SCHEDULER_ENABLED: "false"
       LIBRECRAWL_ENABLED: "false"
     steps:
@@ -76,8 +78,7 @@ jobs:
       NEXT_PUBLIC_API_URL: http://localhost:8000
       NEXTAUTH_URL: http://localhost:3000
       NEXTAUTH_SECRET: ci-nextauth-secret
-      AUTH_EMAIL: admin@example.com
-      AUTH_PASSWORD: ci-password
+      OAUTH_BRIDGE_SECRET: ci-oauth-bridge-secret-with-more-than-thirty-two-characters
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -94,6 +95,20 @@ jobs:
       - name: Lint
         run: pnpm lint
       - name: Typecheck
-        run: pnpm typecheck
+        id: typecheck
+        shell: bash
+        run: |
+          set +e
+          pnpm typecheck > typecheck.log 2>&1
+          code=$?
+          cat typecheck.log
+          exit $code
+      - name: Upload TypeScript diagnostics
+        if: failure() && steps.typecheck.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-typecheck-log
+          path: frontend/typecheck.log
+          retention-days: 3
       - name: Build
         run: pnpm build

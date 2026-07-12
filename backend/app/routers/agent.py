@@ -1,16 +1,18 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, case, delete
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db, async_session_factory
-from app.models.site import Site
+from app.database import get_db
+from app.dependencies.workspace import WorkspaceContext, get_current_workspace, require_workspace_role
 from app.models.agent_run import AgentRun
 from app.models.issue import Issue
+from app.models.site import Site
 from app.services.agent_graph import run_agent_graph
 from app.services.health_score import calculate_health_score
+from app.services.site_service import get_site_by_id
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -24,67 +26,82 @@ class AgentRunResponse(BaseModel):
     status: str
 
 
+async def _require_site(
+    db: AsyncSession,
+    context: WorkspaceContext,
+    site_id: uuid.UUID,
+) -> Site:
+    site = await get_site_by_id(db, site_id, context.workspace.id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    return site
+
+
 @router.post("/run", response_model=AgentRunResponse)
 async def start_agent_run(
     data: AgentRunRequest,
     background_tasks: BackgroundTasks,
+    context: WorkspaceContext = Depends(get_current_workspace),
     db: AsyncSession = Depends(get_db),
 ):
-    """Start an agent analysis run for a site."""
-    site = await db.get(Site, data.site_id)
-    if not site:
-        raise HTTPException(status_code=404, detail="Site not found")
+    require_workspace_role(context, "owner", "admin")
+    site = await _require_site(db, context, data.site_id)
 
-    # Create initial run record to return ID
     agent_run = AgentRun(site_id=site.id, status="running", trigger="manual")
     db.add(agent_run)
     await db.commit()
     await db.refresh(agent_run)
-
-    # Start in background
     background_tasks.add_task(_run_agent_background_with_id, site.id, agent_run.id)
-
     return AgentRunResponse(run_id=str(agent_run.id), status="running")
 
 
 async def _run_agent_background_with_id(site_id: uuid.UUID, run_id: uuid.UUID):
-    """Run LangGraph agent pipeline in background."""
     await run_agent_graph(site_id, run_id)
 
 
-# Need Page import at module level
-from app.models.page import Page
-
-
 @router.get("/runs/{site_id}")
-async def get_agent_runs(site_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    """Get all agent runs for a site."""
-    result = await db.execute(
-        select(AgentRun)
-        .where(AgentRun.site_id == site_id)
-        .order_by(AgentRun.started_at.desc())
-        .limit(20)
-    )
-    runs = result.scalars().all()
+async def get_agent_runs(
+    site_id: uuid.UUID,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+):
+    await _require_site(db, context, site_id)
+    runs = (
+        await db.execute(
+            select(AgentRun)
+            .where(AgentRun.site_id == site_id)
+            .order_by(AgentRun.started_at.desc())
+            .limit(20)
+        )
+    ).scalars().all()
     return [
         {
-            "id": str(r.id),
-            "status": r.status,
-            "trigger": r.trigger,
-            "pages_analyzed": r.pages_analyzed,
-            "issues_found": r.issues_found,
-            "summary": r.summary,
-            "started_at": r.started_at.isoformat() if r.started_at else None,
-            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+            "id": str(run.id),
+            "status": run.status,
+            "trigger": run.trigger,
+            "pages_analyzed": run.pages_analyzed,
+            "issues_found": run.issues_found,
+            "summary": run.summary,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
         }
-        for r in runs
+        for run in runs
     ]
 
 
 @router.get("/run/{run_id}")
-async def get_agent_run(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    """Get status of a specific agent run."""
-    run = await db.get(AgentRun, run_id)
+async def get_agent_run(
+    run_id: uuid.UUID,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+):
+    run = (
+        await db.execute(
+            select(AgentRun)
+            .join(Site, Site.id == AgentRun.site_id)
+            .where(AgentRun.id == run_id, Site.workspace_id == context.workspace.id)
+        )
+    ).scalar_one_or_none()
     if not run:
         raise HTTPException(status_code=404, detail="Agent run not found")
     return {
@@ -106,11 +123,11 @@ async def get_issues(
     status: str = "open",
     category: str | None = None,
     severity: str | None = None,
+    context: WorkspaceContext = Depends(get_current_workspace),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get issues for a site with optional filters."""
+    await _require_site(db, context, site_id)
     query = select(Issue).where(Issue.site_id == site_id)
-
     if status != "all":
         query = query.where(Issue.status == status)
     if category:
@@ -119,7 +136,6 @@ async def get_issues(
         query = query.where(Issue.severity == severity)
 
     query = query.order_by(
-        # Sort critical first
         case(
             (Issue.severity == "critical", 0),
             (Issue.severity == "high", 1),
@@ -128,23 +144,20 @@ async def get_issues(
         ),
         Issue.created_at.desc(),
     )
-
-    result = await db.execute(query)
-    issues = result.scalars().all()
-
+    issues = (await db.execute(query)).scalars().all()
     return [
         {
-            "id": str(i.id),
-            "category": i.category,
-            "severity": i.severity,
-            "title": i.title,
-            "description": i.description,
-            "recommendation": i.recommendation,
-            "affected_url": i.affected_url,
-            "status": i.status,
-            "created_at": i.created_at.isoformat() if i.created_at else None,
+            "id": str(issue.id),
+            "category": issue.category,
+            "severity": issue.severity,
+            "title": issue.title,
+            "description": issue.description,
+            "recommendation": issue.recommendation,
+            "affected_url": issue.affected_url,
+            "status": issue.status,
+            "created_at": issue.created_at.isoformat() if issue.created_at else None,
         }
-        for i in issues
+        for issue in issues
     ]
 
 
@@ -152,13 +165,20 @@ async def get_issues(
 async def update_issue_status(
     issue_id: uuid.UUID,
     status: str,
+    context: WorkspaceContext = Depends(get_current_workspace),
     db: AsyncSession = Depends(get_db),
 ):
-    """Dismiss or mark an issue as fixed."""
+    require_workspace_role(context, "owner", "admin")
     if status not in ("open", "dismissed", "fixed"):
         raise HTTPException(status_code=422, detail="Status must be open, dismissed, or fixed")
 
-    issue = await db.get(Issue, issue_id)
+    issue = (
+        await db.execute(
+            select(Issue)
+            .join(Site, Site.id == Issue.site_id)
+            .where(Issue.id == issue_id, Site.workspace_id == context.workspace.id)
+        )
+    ).scalar_one_or_none()
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
 
@@ -168,36 +188,34 @@ async def update_issue_status(
 
 
 @router.get("/health-score/{site_id}")
-async def get_health_score(site_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    """Get SEO health score for a site."""
-    site = await db.get(Site, site_id)
-    if not site:
-        raise HTTPException(status_code=404, detail="Site not found")
-
+async def get_health_score(
+    site_id: uuid.UUID,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+):
+    await _require_site(db, context, site_id)
     return await calculate_health_score(db, site_id)
 
 
 @router.get("/scheduler-status")
-async def get_scheduler_status():
-    """Get scheduler status and next run time."""
+async def get_scheduler_status(
+    context: WorkspaceContext = Depends(get_current_workspace),
+):
     from app.services.scheduler import scheduler
-    jobs = scheduler.get_jobs()
+
     return {
         "running": scheduler.running,
-        "jobs": [
-            {
-                "id": job.id,
-                "name": job.name,
-                "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
-            }
-            for job in jobs
-        ],
+        "workspace_id": str(context.workspace.id),
+        "jobs": [],
     }
 
 
-@router.post("/trigger-scheduled-run")
-async def trigger_scheduled_run(background_tasks: BackgroundTasks):
-    """Manually trigger the scheduled agent run for all sites."""
-    from app.services.scheduler import scheduled_agent_run
-    background_tasks.add_task(scheduled_agent_run)
-    return {"status": "triggered"}
+@router.post("/trigger-scheduled-run", status_code=410)
+async def trigger_scheduled_run(
+    context: WorkspaceContext = Depends(get_current_workspace),
+):
+    require_workspace_role(context, "owner", "admin")
+    raise HTTPException(
+        status_code=410,
+        detail="Global scheduled execution is disabled until durable workspace-scoped jobs are implemented",
+    )

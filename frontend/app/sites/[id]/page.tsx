@@ -1,26 +1,42 @@
 "use client";
 
 import { use, useState } from "react";
+import { useSession } from "next-auth/react";
 import useSWR from "swr";
-import SiteHeader from "@/components/sites/site-header";
-import StatCards from "@/components/sites/stat-cards";
-import PagesTable from "@/components/sites/pages-table";
-import IssuesPanel from "@/components/sites/issues-panel";
-import FixActionsPanel from "@/components/sites/fix-actions-panel";
-import IntegrationsPanel from "@/components/sites/integrations-panel";
+
 import AgentChatPanel from "@/components/sites/agent-chat-panel";
 import EEATPanel from "@/components/sites/eeat-panel";
+import FixActionsPanel from "@/components/sites/fix-actions-panel";
+import IntegrationsPanel from "@/components/sites/integrations-panel";
+import IssuesPanel from "@/components/sites/issues-panel";
 import LinksPanel from "@/components/sites/links-panel";
+import PagesTable from "@/components/sites/pages-table";
+import SiteHeader from "@/components/sites/site-header";
+import StatCards from "@/components/sites/stat-cards";
 import StatusCodesPanel from "@/components/sites/status-codes-panel";
 import VisualizationPanel from "@/components/sites/visualization-panel";
+import { apiFetch } from "@/lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-async function fetcher(url: string) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Failed to fetch");
-  return res.json();
-}
+type SiteDetail = {
+  id: string;
+  name: string;
+  domain: string;
+  status: string;
+  updated_at: string;
+  page_count: number;
+  issue_count: number;
+  tech_stack?: string;
+  github_repo?: string;
+  health_score: number | null;
+  health_grade: string | null;
+  latest_run: {
+    issues_found: number;
+    pages_analyzed: number;
+    summary: string | null;
+    completed_at: string | null;
+  } | null;
+  librecrawl_enabled: boolean;
+};
 
 export default function SiteDetailPage({
   params,
@@ -28,14 +44,37 @@ export default function SiteDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const { data: site, error, mutate } = useSWR(`${API_URL}/sites/${id}`, fetcher);
-  const [activeTab, setActiveTab] = useState<"agent" | "pages" | "issues" | "fixes" | "eeat" | "links" | "status" | "visualization" | "integrations">("agent");
+  const { data: session } = useSession();
+  const canUseApi = Boolean(session?.accessToken && session.workspaceId);
+  const { data: site, error, mutate } = useSWR<SiteDetail>(
+    canUseApi ? `/sites/${id}` : null,
+    (path: string) => apiFetch<SiteDetail>(path),
+  );
+  const [activeTab, setActiveTab] = useState<
+    | "agent"
+    | "pages"
+    | "issues"
+    | "fixes"
+    | "eeat"
+    | "links"
+    | "status"
+    | "visualization"
+    | "integrations"
+  >("agent");
   const [issueKey, setIssueKey] = useState(0);
+
+  if (!canUseApi) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <p className="text-amber-700">A registered workspace account is required.</p>
+      </div>
+    );
+  }
 
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-red-600">Site not found</p>
+        <p className="text-red-600">Site not found in this workspace</p>
       </div>
     );
   }
@@ -49,7 +88,7 @@ export default function SiteDetailPage({
   }
 
   function handleAgentComplete() {
-    setIssueKey((k) => k + 1);
+    setIssueKey((key) => key + 1);
     setActiveTab("issues");
     mutate();
   }
@@ -72,8 +111,8 @@ export default function SiteDetailPage({
       <main className="max-w-7xl mx-auto px-6 py-8">
         <StatCards site={site} />
         <div className="mt-8">
-          <div className="border-b border-gray-200 mb-6">
-            <nav className="flex gap-6">
+          <div className="border-b border-gray-200 mb-6 overflow-x-auto">
+            <nav className="flex gap-6 min-w-max">
               {tabs.map((tab) => (
                 <button
                   key={tab.key}

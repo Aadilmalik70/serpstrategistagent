@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { signIn } from "next-auth/react";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
-export default function SignInForm() {
+export default function SignInForm({ callbackUrl = "/" }: { callbackUrl?: string }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -25,15 +26,15 @@ export default function SignInForm() {
       setError("Invalid email or password");
       setLoading(false);
     } else {
-      router.push("/");
+      router.push(callbackUrl);
       router.refresh();
     }
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 w-full max-w-sm">
+    <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
       <div>
-        <label htmlFor="email" className="block text-sm font-medium mb-1">
+        <label htmlFor="email" className="mb-1 block text-sm font-medium">
           Email
         </label>
         <input
@@ -41,11 +42,11 @@ export default function SignInForm() {
           name="email"
           type="email"
           required
-          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
       <div>
-        <label htmlFor="password" className="block text-sm font-medium mb-1">
+        <label htmlFor="password" className="mb-1 block text-sm font-medium">
           Password
         </label>
         <input
@@ -53,17 +54,26 @@ export default function SignInForm() {
           name="password"
           type="password"
           required
-          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
-      {error && <p className="text-red-600 text-sm">{error}</p>}
+      {error && <p className="text-sm text-red-600">{error}</p>}
       <button
         type="submit"
         disabled={loading}
-        className="w-full py-2 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+        className="w-full rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50"
       >
         {loading ? "Signing in..." : "Sign In"}
       </button>
+      <p className="text-center text-sm text-gray-600">
+        New to SERP Strategists?{" "}
+        <Link
+          href={`/register?callbackUrl=${encodeURIComponent(callbackUrl)}`}
+          className="text-blue-600 hover:underline"
+        >
+          Create an account
+        </Link>
+      </p>
     </form>
   );
 }

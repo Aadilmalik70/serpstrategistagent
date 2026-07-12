@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { apiFetch } from "@/lib/api";
 
 interface SiteHeaderProps {
   site: {
@@ -14,28 +14,31 @@ interface SiteHeaderProps {
   onAgentComplete?: () => void;
 }
 
+type AgentRun = { run_id: string };
+type AgentStatus = { status: string };
+
 export default function SiteHeader({ site, onAgentComplete }: SiteHeaderProps) {
   const [running, setRunning] = useState(false);
 
   async function handleRunAgent() {
     setRunning(true);
     try {
-      const res = await fetch(`${API_URL}/agent/run`, {
+      const data = await apiFetch<AgentRun>("/agent/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ site_id: site.id }),
       });
-      if (!res.ok) throw new Error("Failed to start agent");
-      const data = await res.json();
 
-      // Poll for completion
-      const pollInterval = setInterval(async () => {
-        const statusRes = await fetch(`${API_URL}/agent/run/${data.run_id}`);
-        const status = await statusRes.json();
-        if (status.status === "completed" || status.status === "failed") {
-          clearInterval(pollInterval);
+      const pollInterval = window.setInterval(async () => {
+        try {
+          const run = await apiFetch<AgentStatus>(`/agent/run/${data.run_id}`);
+          if (run.status === "completed" || run.status === "failed") {
+            window.clearInterval(pollInterval);
+            setRunning(false);
+            onAgentComplete?.();
+          }
+        } catch {
+          window.clearInterval(pollInterval);
           setRunning(false);
-          onAgentComplete?.();
         }
       }, 1000);
     } catch {

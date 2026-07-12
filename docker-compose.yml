@@ -38,6 +38,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/serpstrategist
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: local-development-secret-key-change-before-deploy
+      OAUTH_BRIDGE_SECRET: local-oauth-bridge-secret-change-before-deploy
+      CREDENTIAL_ENCRYPTION_KEY: local-credential-encryption-key-change-before-deploy
       SCHEDULER_ENABLED: "false"
     command: >-
       sh -c "alembic upgrade head &&
@@ -66,8 +68,11 @@ services:
       NEXT_PUBLIC_API_URL: http://localhost:8000
       NEXTAUTH_URL: http://localhost:3000
       NEXTAUTH_SECRET: local-nextauth-secret-change-before-deploy
-      AUTH_EMAIL: admin@example.com
-      AUTH_PASSWORD: admin123
+      OAUTH_BRIDGE_SECRET: local-oauth-bridge-secret-change-before-deploy
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_ID: ${GITHUB_ID:-}
+      GITHUB_SECRET: ${GITHUB_SECRET:-}
     ports:
       - "3000:3000"
     depends_on:
