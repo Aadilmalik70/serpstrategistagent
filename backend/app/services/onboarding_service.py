@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 import uuid
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -130,7 +131,10 @@ async def _apply_site(
 
     website_url = _required_text(answers, "website_url", "Website URL")
     site_name = _required_text(answers, "site_name", "Display name")
-    site_input = SiteCreate(domain=website_url, name=site_name)
+    try:
+        site_input = SiteCreate(domain=website_url, name=site_name)
+    except ValidationError as exc:
+        raise OnboardingServiceError("Enter a valid website URL, such as https://example.com") from exc
 
     previous_site = (state.answers or {}).get("site", {})
     previous_site_id = previous_site.get("site_id") if isinstance(previous_site, dict) else None
