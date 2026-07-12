@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     # Auth
     secret_key: str = "change-me-in-production"
+    oauth_bridge_secret: str = ""
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
 
@@ -58,6 +59,8 @@ class Settings(BaseSettings):
                 raise ValueError("SECRET_KEY must be at least 32 characters in staging and production")
             if not self.frontend_url.startswith(("http://", "https://")):
                 raise ValueError("FRONTEND_URL must be an absolute URL")
+        if self.oauth_bridge_secret and len(self.oauth_bridge_secret) < 32:
+            raise ValueError("OAUTH_BRIDGE_SECRET must be at least 32 characters when configured")
         return self
 
     @computed_field
