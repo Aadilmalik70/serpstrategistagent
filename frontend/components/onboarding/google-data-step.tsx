@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import useSWR from "swr";
 
 import { apiFetch, OperatorApiError } from "@/lib/api";
@@ -34,8 +34,8 @@ type OAuthStart = { authorization_url: string };
 export default function GoogleDataStep({ onReady }: { onReady?: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState("");
-  const [gscProperty, setGscProperty] = useState("");
-  const [ga4Property, setGa4Property] = useState("");
+  const [gscOverride, setGscOverride] = useState<string | null>(null);
+  const [ga4Override, setGa4Override] = useState<string | null>(null);
 
   const {
     data: connection,
@@ -49,11 +49,8 @@ export default function GoogleDataStep({ onReady }: { onReady?: () => void }) {
     apiFetch,
   );
 
-  useEffect(() => {
-    setGscProperty(connection?.gsc_property || "");
-    setGa4Property(connection?.ga4_property_id || "");
-  }, [connection?.ga4_property_id, connection?.gsc_property]);
-
+  const gscProperty = gscOverride ?? connection?.gsc_property ?? "";
+  const ga4Property = ga4Override ?? connection?.ga4_property_id ?? "";
   const selectedGa4Name = useMemo(
     () => catalog?.ga4_properties.find((item) => item.id === ga4Property)?.name || null,
     [catalog?.ga4_properties, ga4Property],
@@ -90,6 +87,8 @@ export default function GoogleDataStep({ onReady }: { onReady?: () => void }) {
         }),
       });
       await Promise.all([mutateConnection(), mutateCatalog()]);
+      setGscOverride(null);
+      setGa4Override(null);
       setMessage("Google data properties saved.");
       onReady?.();
     } catch (error) {
@@ -144,7 +143,7 @@ export default function GoogleDataStep({ onReady }: { onReady?: () => void }) {
           <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[#646464]">Search Console</span>
           <select
             value={gscProperty}
-            onChange={(event) => setGscProperty(event.target.value)}
+            onChange={(event) => setGscOverride(event.target.value)}
             className="mt-3 h-12 w-full rounded-full border border-[rgba(32,32,32,0.18)] bg-white px-4 text-sm"
           >
             <option value="">Choose a property</option>
@@ -159,7 +158,7 @@ export default function GoogleDataStep({ onReady }: { onReady?: () => void }) {
           <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[#646464]">Google Analytics 4</span>
           <select
             value={ga4Property}
-            onChange={(event) => setGa4Property(event.target.value)}
+            onChange={(event) => setGa4Override(event.target.value)}
             className="mt-3 h-12 w-full rounded-full border border-[rgba(32,32,32,0.18)] bg-white px-4 text-sm"
           >
             <option value="">Choose a GA4 property</option>
