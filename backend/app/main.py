@@ -9,6 +9,7 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.database import engine
 from app.routers import actions, agent, auth, billing, chat, crawl, integrations, site_claims, sites, workspaces
+from app.services.entitlement_service import QuotaExceededError
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 settings = get_settings()
@@ -41,6 +42,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(QuotaExceededError)
+async def quota_exceeded_handler(request: Request, exc: QuotaExceededError):
+    del request
+    return JSONResponse(
+        status_code=402,
+        content={
+            "detail": {
+                "code": "quota_exceeded",
+                "message": str(exc),
+                "metric": exc.metric,
+                "limit": exc.limit,
+                "used": exc.current,
+                "requested": exc.requested,
+            }
+        },
+    )
 
 
 @app.middleware("http")
