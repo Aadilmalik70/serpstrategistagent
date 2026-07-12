@@ -11,7 +11,7 @@ from app.database import Base
 class GoogleDataConnection(Base):
     __tablename__ = "google_data_connections"
     __table_args__ = (
-        UniqueConstraint("workspace_id", "user_id", name="uq_google_data_workspace_user"),
+        UniqueConstraint("workspace_id", name="uq_google_data_workspace"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
