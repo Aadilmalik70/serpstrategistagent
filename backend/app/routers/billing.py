@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies.workspace import WorkspaceContext, get_current_workspace, require_workspace_role
 from app.schemas.billing import (
+    BillingCheckoutConfirmRequest,
     BillingCheckoutRequest,
     BillingPlanDefinition,
     BillingSummary,
@@ -13,6 +14,7 @@ from app.schemas.billing import (
 from app.services.billing_service import (
     StripeBillingError,
     billing_summary,
+    confirm_checkout_session,
     create_billing_portal_session,
     create_checkout_session,
     parse_and_process_webhook,
@@ -86,6 +88,24 @@ async def start_checkout(
     except StripeBillingError as exc:
         raise _billing_error(exc) from exc
     return BillingUrlResponse(url=url)
+
+
+@router.post("/checkout/confirm", response_model=BillingSummary)
+async def confirm_checkout(
+    data: BillingCheckoutConfirmRequest,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+) -> BillingSummary:
+    require_workspace_role(context, "owner", "admin")
+    try:
+        await confirm_checkout_session(
+            db,
+            workspace_id=context.workspace.id,
+            session_id=data.session_id,
+        )
+    except StripeBillingError as exc:
+        raise _billing_error(exc) from exc
+    return BillingSummary.model_validate(await billing_summary(db, context.workspace.id))
 
 
 @router.post("/portal", response_model=BillingUrlResponse)

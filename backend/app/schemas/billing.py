@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 BillingPlan = Literal["audit", "growth", "scale"]
@@ -18,6 +18,10 @@ class BillingPlanDefinition(BaseModel):
 
 class BillingCheckoutRequest(BaseModel):
     plan: PaidBillingPlan
+
+
+class BillingCheckoutConfirmRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=255)
 
 
 class BillingUrlResponse(BaseModel):

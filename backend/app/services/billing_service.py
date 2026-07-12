@@ -204,7 +204,10 @@ async def create_checkout_session(
             "mode": "subscription",
             "customer": customer_id,
             "client_reference_id": str(workspace_id),
-            "success_url": f"{settings.frontend_url.rstrip('/')}/settings/billing?checkout=success",
+            "success_url": (
+                f"{settings.frontend_url.rstrip('/')}/settings/billing"
+                "?checkout=success&session_id={CHECKOUT_SESSION_ID}"
+            ),
             "cancel_url": f"{settings.frontend_url.rstrip('/')}/settings/billing?checkout=cancelled",
             "line_items[0][price]": price_id,
             "line_items[0][quantity]": "1",
@@ -220,6 +223,48 @@ async def create_checkout_session(
     if not isinstance(checkout_url, str) or not checkout_url.startswith("https://"):
         raise StripeBillingError("Stripe did not return a Checkout URL")
     return checkout_url
+
+
+async def confirm_checkout_session(
+    db: AsyncSession,
+    *,
+    workspace_id: uuid.UUID,
+    session_id: str,
+    client: httpx.AsyncClient | None = None,
+) -> Subscription:
+    session = await _stripe_request(
+        "GET",
+        f"checkout/sessions/{session_id}",
+        client=client,
+    )
+    if session.get("status") != "complete":
+        raise StripeBillingError("Stripe Checkout is not complete", status_code=409)
+
+    session_workspace_id = _metadata_workspace_id(session)
+    if session_workspace_id is None:
+        try:
+            session_workspace_id = uuid.UUID(str(session.get("client_reference_id")))
+        except ValueError:
+            session_workspace_id = None
+    if session_workspace_id != workspace_id:
+        raise StripeBillingError("Checkout Session does not belong to this workspace", status_code=403)
+
+    subscription_id = session.get("subscription")
+    if not isinstance(subscription_id, str) or not subscription_id:
+        raise StripeBillingError("Stripe Checkout did not create a subscription", status_code=400)
+
+    subscription_data = await _stripe_request(
+        "GET",
+        f"subscriptions/{subscription_id}",
+        client=client,
+    )
+    subscription_workspace_id = _metadata_workspace_id(subscription_data)
+    if subscription_workspace_id and subscription_workspace_id != workspace_id:
+        raise StripeBillingError("Stripe subscription does not belong to this workspace", status_code=403)
+
+    subscription = await sync_subscription_object(db, subscription_data)
+    await db.commit()
+    return subscription
 
 
 async def create_billing_portal_session(

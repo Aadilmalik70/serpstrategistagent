@@ -195,16 +195,18 @@ def test_checkout_and_portal_urls_are_server_created(monkeypatch) -> None:
 
     from app.services import billing_service
 
+    customer_id = f"cus_test_{uuid.uuid4().hex}"
+
     async def fake_stripe_request(method, path, *, data=None, client=None):
         del method, client
         if path == "customers":
             assert data and data["metadata[workspace_id]"]
-            return {"id": "cus_test_checkout"}
+            return {"id": customer_id}
         if path == "checkout/sessions":
             assert data and data["line_items[0][price]"] == "price_growth_test"
             return {"url": "https://checkout.stripe.com/test-session"}
         if path == "billing_portal/sessions":
-            assert data and data["customer"] == "cus_test_checkout"
+            assert data and data["customer"] == customer_id
             return {"url": "https://billing.stripe.com/test-portal"}
         raise AssertionError(f"Unexpected Stripe path: {path}")
 
@@ -222,5 +224,69 @@ def test_checkout_and_portal_urls_are_server_created(monkeypatch) -> None:
             portal = client.post("/billing/portal", headers=headers)
             assert portal.status_code == 200, portal.text
             assert portal.json()["url"] == "https://billing.stripe.com/test-portal"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_completed_checkout_can_be_confirmed_after_return(monkeypatch) -> None:
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_server_only")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_server_only")
+    monkeypatch.setenv("STRIPE_GROWTH_PRICE_ID", "price_growth_test")
+    monkeypatch.setenv("STRIPE_SCALE_PRICE_ID", "price_scale_test")
+    get_settings.cache_clear()
+
+    from app.services import billing_service
+
+    now = int(time.time())
+    suffix = uuid.uuid4().hex
+    session_id = f"cs_test_{suffix}"
+    customer_id = f"cus_test_{suffix}"
+    subscription_id = f"sub_test_{suffix}"
+    workspace_id: str | None = None
+
+    async def fake_stripe_request(method, path, *, data=None, client=None):
+        del data, client
+        assert method == "GET"
+        if path == f"checkout/sessions/{session_id}":
+            return {
+                "id": session_id,
+                "object": "checkout.session",
+                "status": "complete",
+                "customer": customer_id,
+                "subscription": subscription_id,
+                "client_reference_id": workspace_id,
+                "metadata": {"workspace_id": workspace_id, "plan": "growth"},
+            }
+        if path == f"subscriptions/{subscription_id}":
+            return {
+                "id": subscription_id,
+                "object": "subscription",
+                "customer": customer_id,
+                "status": "active",
+                "cancel_at_period_end": False,
+                "current_period_start": now,
+                "current_period_end": now + 30 * 24 * 60 * 60,
+                "metadata": {"workspace_id": workspace_id, "plan": "growth"},
+                "items": {"data": [{"price": {"id": "price_growth_test"}}]},
+            }
+        raise AssertionError(f"Unexpected Stripe path: {path}")
+
+    monkeypatch.setattr(billing_service, "_stripe_request", fake_stripe_request)
+
+    try:
+        with TestClient(app) as client:
+            auth = _register(client, "checkout-confirm-owner")
+            workspace_id = auth["workspace"]["id"]
+
+            response = client.post(
+                "/billing/checkout/confirm",
+                headers=_headers(auth),
+                json={"session_id": session_id},
+            )
+
+            assert response.status_code == 200, response.text
+            assert response.json()["plan"] == "growth"
+            assert response.json()["status"] == "active"
+            assert response.json()["entitlements"]["sites"] == 5
     finally:
         get_settings.cache_clear()

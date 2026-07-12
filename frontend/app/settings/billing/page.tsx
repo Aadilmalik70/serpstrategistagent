@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 
 import { apiFetch, OperatorApiError } from "@/lib/api";
@@ -58,6 +58,8 @@ export default function BillingPage() {
   const { data: session } = useSession();
   const [action, setAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [checkoutNotice, setCheckoutNotice] = useState<string | null>(null);
+  const checkoutConfirmationStarted = useRef(false);
 
   const { data: summary, mutate } = useSWR<BillingSummary>(
     session?.accessToken && session.workspaceId ? "/billing/summary" : null,
@@ -67,6 +69,42 @@ export default function BillingPage() {
     session?.accessToken && session.workspaceId ? "/billing/plans" : null,
     apiFetch,
   );
+
+  useEffect(() => {
+    if (
+      checkoutConfirmationStarted.current ||
+      !session?.accessToken ||
+      !session.workspaceId
+    ) {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("checkout") !== "success") return;
+
+    const sessionId = params.get("session_id");
+    if (!sessionId) return;
+
+    checkoutConfirmationStarted.current = true;
+
+    void apiFetch<BillingSummary>("/billing/checkout/confirm", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId }),
+    })
+      .then((updated) => {
+        void mutate(updated, false);
+        setCheckoutNotice(`${updated.plan[0].toUpperCase()}${updated.plan.slice(1)} plan activated.`);
+        window.history.replaceState({}, "", window.location.pathname);
+      })
+      .catch((caught) => {
+        setCheckoutNotice(null);
+        setError(
+          caught instanceof OperatorApiError
+            ? caught.message
+            : "Checkout succeeded, but the subscription could not be synchronized.",
+        );
+      });
+  }, [mutate, session?.accessToken, session?.workspaceId]);
 
   const periodLabel = useMemo(() => {
     if (!summary) return "Current billing period";
@@ -132,6 +170,11 @@ export default function BillingPage() {
         {error && (
           <div className="rounded-2xl border border-[#ea2804]/25 bg-[#fff2ee] px-5 py-4 text-sm text-[#9e1f08]">
             {error}
+          </div>
+        )}
+        {checkoutNotice && (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-800">
+            {checkoutNotice}
           </div>
         )}
 
