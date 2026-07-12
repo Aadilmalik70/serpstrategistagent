@@ -94,6 +94,20 @@ jobs:
       - name: Lint
         run: pnpm lint
       - name: Typecheck
-        run: pnpm typecheck
+        id: typecheck
+        shell: bash
+        run: |
+          set +e
+          pnpm typecheck > typecheck.log 2>&1
+          code=$?
+          cat typecheck.log
+          exit $code
+      - name: Upload TypeScript diagnostics
+        if: failure() && steps.typecheck.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-typecheck-log
+          path: frontend/typecheck.log
+          retention-days: 3
       - name: Build
         run: pnpm build
