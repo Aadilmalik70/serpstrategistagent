@@ -8,7 +8,20 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.database import engine
-from app.routers import actions, agent, auth, billing, chat, crawl, integrations, onboarding, site_claims, sites, workspaces
+from app.routers import (
+    actions,
+    agent,
+    auth,
+    billing,
+    chat,
+    crawl,
+    google_data,
+    integrations,
+    onboarding,
+    site_claims,
+    sites,
+    workspaces,
+)
 from app.services.entitlement_service import QuotaExceededError
 from app.services.scheduler import start_scheduler, stop_scheduler
 
@@ -82,6 +95,8 @@ app.include_router(auth.router)
 app.include_router(workspaces.router)
 app.include_router(billing.router)
 app.include_router(onboarding.router)
+app.include_router(google_data.router)
+app.include_router(google_data.callback_router)
 app.include_router(integrations.router)
 app.include_router(site_claims.router)
 app.include_router(sites.router)
