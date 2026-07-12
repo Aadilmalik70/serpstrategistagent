@@ -3,6 +3,12 @@ import SignInForm from "@/components/auth/sign-in-form";
 
 const oauthErrorMessages: Record<string, string> = {
   OAuthEmailUnverified: "The provider did not return a verified email address.",
+  GitHubEmailPermission:
+    "GitHub did not grant access to your verified email. Re-authorize SERP Strategists with the user:email permission.",
+  GitHubEmailUnverified:
+    "Your GitHub account has no verified email address. Verify an email in GitHub Settings → Emails, then try again.",
+  GitHubEmailUnavailable:
+    "GitHub's email service could not be reached for this sign-in. Try again in a moment.",
   OAuthEmailUnavailable: "A verified GitHub email could not be read for this account.",
   OAuthSignin: "Social sign-in could not be completed. Check the provider configuration and try again.",
 };
