@@ -1,3 +1,4 @@
+import logging
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -13,6 +14,7 @@ from app.schemas.google_data import (
     GooglePropertyCatalogResponse,
     GooglePropertySelectionRequest,
 )
+from app.services.credential_vault import CredentialVaultError
 from app.services.google_baseline_service import sync_google_baseline
 from app.services.google_data_service import (
     GoogleDataServiceError,
@@ -22,6 +24,8 @@ from app.services.google_data_service import (
     list_google_properties,
     start_google_oauth,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/integrations/google-data", tags=["google-data"])
 callback_router = APIRouter(tags=["google-data"])
@@ -81,9 +85,22 @@ async def google_data_callback(
         )
     try:
         redirect_url = await complete_google_oauth(db, code, state)
-    except GoogleDataServiceError as exc:
+    except CredentialVaultError:
+        logger.exception("Google OAuth callback could not access the credential encryption vault")
         return RedirectResponse(
-            _onboarding_return(google_error=str(exc)[:120]),
+            _onboarding_return(google_error="credential_encryption_unavailable"),
+            status_code=303,
+        )
+    except GoogleDataServiceError as exc:
+        logger.warning("Google OAuth callback failed: %s", exc)
+        return RedirectResponse(
+            _onboarding_return(google_error="google_connection_failed"),
+            status_code=303,
+        )
+    except Exception:
+        logger.exception("Unexpected Google OAuth callback failure")
+        return RedirectResponse(
+            _onboarding_return(google_error="internal_error"),
             status_code=303,
         )
     return RedirectResponse(redirect_url, status_code=303)

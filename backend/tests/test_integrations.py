@@ -63,10 +63,10 @@ def test_encrypted_integration_lifecycle_and_workspace_isolation(monkeypatch) ->
             catalog = client.get("/integrations/providers", headers=owner_headers)
             assert catalog.status_code == 200
             providers = {item["id"]: item for item in catalog.json()}
-            assert set(providers) == {"wordpress", "google_search_console", "google_analytics"}
+            assert set(providers) == {"wordpress"}
             assert providers["wordpress"]["available"] is True
-            assert providers["google_search_console"]["connection_mode"] == "oauth"
-            assert providers["google_search_console"]["available"] is False
+            for dedicated_provider in ("google_search_console", "google_analytics"):
+                assert dedicated_provider not in providers
             for platform_provider in ("openai", "gemini", "serpapi", "serper", "ai_gateway"):
                 assert platform_provider not in providers
 
@@ -121,13 +121,12 @@ def test_encrypted_integration_lifecycle_and_workspace_isolation(monkeypatch) ->
                     headers=owner_headers,
                     json={
                         "provider": platform_provider,
-                        "label": "Must be rejected",
-                        "credentials": {"api_key": "workspace-secret"},
+                        "label": f"Forbidden {platform_provider}",
+                        "credentials": {"api_key": "should-never-be-stored"},
                     },
                 )
                 assert rejected.status_code == 422
-                assert "managed by SERP Strategists" in rejected.text
-                assert "workspace-secret" not in rejected.text
+                assert "should-never-be-stored" not in rejected.text
 
             listed = client.get("/integrations", headers=owner_headers)
             assert listed.status_code == 200
