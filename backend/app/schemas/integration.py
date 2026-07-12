@@ -5,8 +5,10 @@ import uuid
 from pydantic import BaseModel, Field, field_validator
 
 
-SUPPORTED_MANUAL_PROVIDERS = {"openai", "gemini", "serpapi", "serper", "wordpress"}
-SUPPORTED_PROVIDER_IDS = SUPPORTED_MANUAL_PROVIDERS | {"google_search_console", "google_analytics"}
+SUPPORTED_MANUAL_PROVIDERS = {"wordpress"}
+SUPPORTED_OAUTH_PROVIDER_IDS = {"google_search_console", "google_analytics"}
+PLATFORM_MANAGED_PROVIDER_IDS = {"openai", "gemini", "serpapi", "serper", "ai_gateway"}
+SUPPORTED_PROVIDER_IDS = SUPPORTED_MANUAL_PROVIDERS | SUPPORTED_OAUTH_PROVIDER_IDS
 
 
 class IntegrationFieldDefinition(BaseModel):
@@ -40,6 +42,8 @@ class IntegrationCredentialCreate(BaseModel):
     @classmethod
     def validate_provider(cls, value: str) -> str:
         normalized = value.strip().lower()
+        if normalized in PLATFORM_MANAGED_PROVIDER_IDS:
+            raise ValueError("This provider is managed by SERP Strategists and cannot use workspace credentials")
         if normalized not in SUPPORTED_MANUAL_PROVIDERS:
             raise ValueError("This provider does not support manual credential storage")
         return normalized
