@@ -7,7 +7,9 @@ declare module "next-auth" {
     workspaceId?: string;
     workspaceName?: string;
     workspaceRole?: string;
-    legacy?: boolean;
+    oauthLinkRequired?: boolean;
+    oauthLinkToken?: string;
+    oauthLinkEmail?: string;
     user?: {
       id: string;
       name?: string | null;
@@ -23,6 +25,8 @@ declare module "next-auth/jwt" {
     workspaceId?: string;
     workspaceName?: string;
     workspaceRole?: string;
-    legacy?: boolean;
+    oauthLinkRequired?: boolean;
+    oauthLinkToken?: string;
+    oauthLinkEmail?: string;
   }
 }
