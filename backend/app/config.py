@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import urlparse
 
 from pydantic import computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings
@@ -15,16 +16,21 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
 
-    # LLM providers
-    openai_api_key: str = ""
-    google_api_key: str = ""
-    groq_api_key: str = ""
+    # Platform-managed AI gateway. Keys are server-only Railway secrets.
+    ai_gateway_base_url: str = "https://api.17.wtf/v1"
+    ai_gateway_api_key: str = ""
+    ai_primary_model: str = "posiden/deepseek-v4-flash"
+    ai_reasoning_model: str = "zeus/claude-sonnet-4-6"
+    ai_fallback_model: str = "latina/gpt-5.6-terra"
+    ai_secondary_fallback_model: str = "latina/gpt-5.6-luna"
+    ai_gateway_timeout_seconds: float = 30.0
 
-    # Search providers
+    # Platform-managed live SERP provider. The key is never workspace supplied.
     serpapi_api_key: str = ""
-    serper_api_key: str = ""
+    serpapi_base_url: str = "https://serpapi.com/search.json"
+    serpapi_timeout_seconds: float = 20.0
 
-    # WordPress integration (optional)
+    # WordPress integration (optional legacy development fallback)
     wordpress_url: str = ""
     wordpress_user: str = ""
     wordpress_app_password: str = ""
@@ -52,6 +58,17 @@ class Settings(BaseSettings):
             return value.replace("postgresql://", "postgresql+asyncpg://", 1)
         return value
 
+    @field_validator("ai_gateway_base_url", "serpapi_base_url")
+    @classmethod
+    def normalize_provider_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Provider base URLs must be absolute HTTP or HTTPS URLs")
+        if parsed.username or parsed.password:
+            raise ValueError("Provider base URLs cannot contain embedded credentials")
+        return normalized
+
     @model_validator(mode="after")
     def validate_secure_environment(self) -> "Settings":
         if self.app_env.lower() in {"staging", "production"}:
@@ -61,6 +78,8 @@ class Settings(BaseSettings):
                 raise ValueError("FRONTEND_URL must be an absolute URL")
         if self.oauth_bridge_secret and len(self.oauth_bridge_secret) < 32:
             raise ValueError("OAUTH_BRIDGE_SECRET must be at least 32 characters when configured")
+        if self.ai_gateway_timeout_seconds <= 0 or self.serpapi_timeout_seconds <= 0:
+            raise ValueError("Provider timeouts must be greater than zero")
         return self
 
     @computed_field
