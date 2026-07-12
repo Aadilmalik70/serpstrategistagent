@@ -7,8 +7,12 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.identity import User, Workspace
 from app.models.onboarding import OnboardingState
+from app.models.site import Site
 from app.schemas.onboarding import ONBOARDING_STEPS, OnboardingResponse
+from app.schemas.site import SiteCreate
+from app.services.site_service import create_site
 
 
 class OnboardingServiceError(ValueError):
@@ -79,6 +83,115 @@ def merge_step_answers(
     return merged
 
 
+def _text(answers: dict[str, Any], key: str) -> str | None:
+    value = answers.get(key)
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+async def _apply_profile(
+    db: AsyncSession,
+    *,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    answers: dict[str, Any],
+) -> None:
+    user = await db.get(User, user_id)
+    workspace = await db.get(Workspace, workspace_id)
+    if not user or not workspace:
+        raise OnboardingServiceError("Workspace identity is unavailable", 404)
+    full_name = _text(answers, "full_name")
+    company_name = _text(answers, "company_name")
+    if full_name:
+        user.name = full_name
+    if company_name:
+        workspace.name = company_name
+
+
+async def _apply_site(
+    db: AsyncSession,
+    *,
+    workspace_id: uuid.UUID,
+    answers: dict[str, Any],
+) -> Site:
+    website_url = _text(answers, "website_url")
+    if not website_url:
+        raise OnboardingServiceError("Website URL is required")
+    try:
+        site_data = SiteCreate(domain=website_url, name=_text(answers, "site_name"))
+    except ValueError as exc:
+        raise OnboardingServiceError("Enter a valid website URL") from exc
+
+    existing = await db.scalar(select(Site).where(Site.domain == site_data.domain))
+    if existing:
+        if existing.workspace_id != workspace_id:
+            raise OnboardingServiceError(
+                "This domain already exists in another workspace. Use the verified site-claim flow.",
+                409,
+            )
+        if site_data.name:
+            existing.name = site_data.name
+        return existing
+
+    return await create_site(db, site_data, workspace_id)
+
+
+async def _apply_cms(
+    db: AsyncSession,
+    *,
+    workspace_id: uuid.UUID,
+    all_answers: dict[str, Any],
+    answers: dict[str, Any],
+) -> None:
+    cms = _text(answers, "cms")
+    if cms not in {"github", "wordpress"}:
+        return
+    site_answers = all_answers.get("site")
+    if not isinstance(site_answers, dict):
+        return
+    website_url = _text(site_answers, "website_url")
+    if not website_url:
+        return
+    try:
+        domain = SiteCreate(domain=website_url).domain
+    except ValueError:
+        return
+    site = await db.scalar(
+        select(Site).where(Site.domain == domain, Site.workspace_id == workspace_id)
+    )
+    if site:
+        site.cms = cms
+
+
+async def _apply_step_effects(
+    db: AsyncSession,
+    *,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    step: str,
+    answers: dict[str, Any],
+    all_answers: dict[str, Any],
+) -> None:
+    if step == "profile":
+        await _apply_profile(
+            db,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            answers=answers,
+        )
+    elif step == "site":
+        await _apply_site(db, workspace_id=workspace_id, answers=answers)
+    elif step == "cms":
+        await _apply_cms(
+            db,
+            workspace_id=workspace_id,
+            all_answers=all_answers,
+            answers=answers,
+        )
+
+
 async def save_onboarding_step(
     db: AsyncSession,
     *,
@@ -99,7 +212,16 @@ async def save_onboarding_step(
         workspace_id=workspace_id,
         user_id=user_id,
     )
-    state.answers = merge_step_answers(state.answers, step=step, answers=answers)
+    merged_answers = merge_step_answers(state.answers, step=step, answers=answers)
+    await _apply_step_effects(
+        db,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        step=step,
+        answers=answers,
+        all_answers=merged_answers,
+    )
+    state.answers = merged_answers
 
     completed = list(dict.fromkeys(state.completed_steps or []))
     if complete_step and step not in completed:
