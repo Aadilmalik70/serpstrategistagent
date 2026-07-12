@@ -88,18 +88,6 @@ export default function Dashboard() {
           <div className="h-32 animate-pulse rounded-[18px] bg-[#f3f0e8]" />
         )}
 
-        {status !== "loading" && session?.legacy && (
-          <div className="rounded-[18px] border border-amber-300 bg-amber-50 p-5 text-amber-900 sm:p-6">
-            <h3 className="font-semibold">Temporary admin session</h3>
-            <p className="mt-1 text-sm leading-6">
-              Tenant APIs require a registered account. Sign out and create an account to continue.
-            </p>
-            <Link href="/register" className="mt-4 inline-flex min-h-10 items-center rounded-full bg-[#202020] px-4 text-sm font-semibold text-white">
-              Create registered account
-            </Link>
-          </div>
-        )}
-
         {canUseApi && (
           <section className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-[18px] border border-[rgba(32,32,32,0.12)] bg-white p-5 sm:p-6">
