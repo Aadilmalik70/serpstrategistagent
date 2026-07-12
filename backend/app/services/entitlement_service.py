@@ -190,6 +190,7 @@ async def record_usage(
     purpose: str = "unspecified",
     details: dict[str, Any] | None = None,
     commit: bool = True,
+    enforce_quota: bool = True,
 ) -> UsageCounter:
     if metric not in USAGE_METRICS:
         raise ValueError(f"Unsupported usage metric: {metric}")
@@ -198,12 +199,13 @@ async def record_usage(
 
     subscription = await get_effective_subscription(db, workspace_id)
     period = subscription_period(subscription)
-    await assert_usage_quota(
-        db,
-        workspace_id=workspace_id,
-        metric=metric,
-        requested=quantity,
-    )
+    if enforce_quota:
+        await assert_usage_quota(
+            db,
+            workspace_id=workspace_id,
+            metric=metric,
+            requested=quantity,
+        )
 
     statement = (
         insert(UsageCounter)
