@@ -98,20 +98,22 @@ async def invite_member(
         )
         or 0
     )
-    pending_invitations = int(
+    pending_other_invitations = int(
         await db.scalar(
             select(func.count(WorkspaceInvitation.id)).where(
                 WorkspaceInvitation.workspace_id == context.workspace.id,
                 WorkspaceInvitation.status == "pending",
+                WorkspaceInvitation.email != data.email,
             )
         )
         or 0
     )
+    active_collaborators = max(active_members - 1, 0)
     await assert_resource_quota(
         db,
         workspace_id=context.workspace.id,
         metric="team_members",
-        current=active_members + pending_invitations,
+        current=active_collaborators + pending_other_invitations,
     )
 
     try:
