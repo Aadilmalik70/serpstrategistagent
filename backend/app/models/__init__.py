@@ -14,7 +14,7 @@ from app.models.identity import (
     WorkspaceInvitation,
 )
 from app.models.integration_credential import IntegrationCredential
-from app.models.billing import Subscription, UsageCounter
+from app.models.billing import StripeWebhookEvent, Subscription, UsageCounter, UsageEvent
 
 __all__ = [
     "Site",
@@ -33,4 +33,6 @@ __all__ = [
     "IntegrationCredential",
     "Subscription",
     "UsageCounter",
+    "UsageEvent",
+    "StripeWebhookEvent",
 ]
