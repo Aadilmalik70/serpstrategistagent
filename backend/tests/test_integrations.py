@@ -31,14 +31,22 @@ def _headers(auth: dict, workspace_id: str | None = None) -> dict[str, str]:
     }
 
 
+def _wordpress_credentials(password: str) -> dict[str, str]:
+    return {
+        "url": "https://example.com",
+        "username": "operator",
+        "application_password": password,
+    }
+
+
 def test_encrypted_integration_lifecycle_and_workspace_isolation(monkeypatch) -> None:
     previous_key = os.environ.get("CREDENTIAL_ENCRYPTION_KEY")
     os.environ["CREDENTIAL_ENCRYPTION_KEY"] = ENCRYPTION_KEY
     suffix = uuid.uuid4().hex
 
     async def fake_connection_test(provider: str, payload: dict) -> tuple[str, str]:
-        assert provider == "openai"
-        assert payload["api_key"] == "sk-test-secret-one"
+        assert provider == "wordpress"
+        assert payload["application_password"] == "application-password-one"
         return "connected", "Connection verified"
 
     monkeypatch.setattr(
@@ -55,49 +63,76 @@ def test_encrypted_integration_lifecycle_and_workspace_isolation(monkeypatch) ->
             catalog = client.get("/integrations/providers", headers=owner_headers)
             assert catalog.status_code == 200
             providers = {item["id"]: item for item in catalog.json()}
-            assert providers["openai"]["available"] is True
+            assert set(providers) == {"wordpress", "google_search_console", "google_analytics"}
+            assert providers["wordpress"]["available"] is True
             assert providers["google_search_console"]["connection_mode"] == "oauth"
             assert providers["google_search_console"]["available"] is False
+            for platform_provider in ("openai", "gemini", "serpapi", "serper", "ai_gateway"):
+                assert platform_provider not in providers
+
+            site = client.post(
+                "/sites",
+                headers=owner_headers,
+                json={
+                    "domain": f"wordpress-{suffix}.example.com",
+                    "name": "Owner WordPress",
+                },
+            )
+            assert site.status_code == 201, site.text
+            site_id = site.json()["id"]
 
             created = client.post(
                 "/integrations",
                 headers=owner_headers,
                 json={
-                    "provider": "openai",
-                    "label": "Primary OpenAI",
+                    "provider": "wordpress",
+                    "label": "Primary WordPress",
+                    "site_id": site_id,
                     "external_account_id": "default",
-                    "credentials": {
-                        "api_key": "sk-test-secret-one",
-                        "organization": "org-test",
-                    },
+                    "credentials": _wordpress_credentials("application-password-one"),
                 },
             )
             assert created.status_code == 201, created.text
             credential = created.json()
             credential_id = credential["id"]
-            assert credential["provider"] == "openai"
+            assert credential["provider"] == "wordpress"
             assert credential["metadata"]["secret_hint"] == "••••-one"
-            assert credential["metadata"]["organization"] == "org-test"
-            assert "api_key" not in credential
+            assert credential["metadata"]["url"] == "https://example.com"
+            assert credential["metadata"]["username"] == "operator"
             assert "credentials" not in credential
             assert "encrypted_payload" not in credential
-            assert "sk-test-secret-one" not in created.text
+            assert "application-password-one" not in created.text
 
             duplicate = client.post(
                 "/integrations",
                 headers=owner_headers,
                 json={
-                    "provider": "openai",
+                    "provider": "wordpress",
                     "label": "Duplicate",
-                    "credentials": {"api_key": "sk-duplicate"},
+                    "site_id": site_id,
+                    "credentials": _wordpress_credentials("duplicate-password"),
                 },
             )
             assert duplicate.status_code == 409
 
+            for platform_provider in ("openai", "gemini", "serpapi", "serper", "ai_gateway"):
+                rejected = client.post(
+                    "/integrations",
+                    headers=owner_headers,
+                    json={
+                        "provider": platform_provider,
+                        "label": "Must be rejected",
+                        "credentials": {"api_key": "workspace-secret"},
+                    },
+                )
+                assert rejected.status_code == 422
+                assert "managed by SERP Strategists" in rejected.text
+                assert "workspace-secret" not in rejected.text
+
             listed = client.get("/integrations", headers=owner_headers)
             assert listed.status_code == 200
             assert len(listed.json()) == 1
-            assert "sk-test-secret-one" not in listed.text
+            assert "application-password-one" not in listed.text
 
             outsider_list = client.get("/integrations", headers=_headers(outsider))
             assert outsider_list.status_code == 200
@@ -106,7 +141,7 @@ def test_encrypted_integration_lifecycle_and_workspace_isolation(monkeypatch) ->
             outsider_rotate = client.put(
                 f"/integrations/{credential_id}",
                 headers=_headers(outsider),
-                json={"credentials": {"api_key": "sk-outsider"}},
+                json={"credentials": _wordpress_credentials("outsider-password")},
             )
             assert outsider_rotate.status_code == 404
 
@@ -121,15 +156,15 @@ def test_encrypted_integration_lifecycle_and_workspace_isolation(monkeypatch) ->
                 f"/integrations/{credential_id}",
                 headers=owner_headers,
                 json={
-                    "label": "Rotated OpenAI",
-                    "credentials": {"api_key": "sk-test-secret-two"},
+                    "label": "Rotated WordPress",
+                    "credentials": _wordpress_credentials("application-password-two"),
                 },
             )
             assert rotated.status_code == 200, rotated.text
-            assert rotated.json()["label"] == "Rotated OpenAI"
+            assert rotated.json()["label"] == "Rotated WordPress"
             assert rotated.json()["metadata"]["secret_hint"] == "••••-two"
             assert rotated.json()["last_validation_status"] == "not_tested"
-            assert "sk-test-secret-two" not in rotated.text
+            assert "application-password-two" not in rotated.text
 
             revoked = client.delete(
                 f"/integrations/{credential_id}",
@@ -147,16 +182,17 @@ def test_encrypted_integration_lifecycle_and_workspace_isolation(monkeypatch) ->
             )
             assert all_after_revoke.status_code == 200
             assert all_after_revoke.json()[0]["status"] == "revoked"
-            assert "sk-test-secret-one" not in all_after_revoke.text
-            assert "sk-test-secret-two" not in all_after_revoke.text
+            assert "application-password-one" not in all_after_revoke.text
+            assert "application-password-two" not in all_after_revoke.text
 
             reconnected = client.post(
                 "/integrations",
                 headers=owner_headers,
                 json={
-                    "provider": "openai",
-                    "label": "Reconnected OpenAI",
-                    "credentials": {"api_key": "sk-test-secret-three"},
+                    "provider": "wordpress",
+                    "label": "Reconnected WordPress",
+                    "site_id": site_id,
+                    "credentials": _wordpress_credentials("application-password-three"),
                 },
             )
             assert reconnected.status_code == 201, reconnected.text
@@ -186,11 +222,7 @@ def test_wordpress_requires_a_site_in_the_same_workspace() -> None:
                 json={
                     "provider": "wordpress",
                     "label": "WordPress",
-                    "credentials": {
-                        "url": "https://example.com",
-                        "username": "operator",
-                        "application_password": "application-password",
-                    },
+                    "credentials": _wordpress_credentials("application-password"),
                 },
             )
             assert missing_site.status_code == 400
@@ -212,11 +244,7 @@ def test_wordpress_requires_a_site_in_the_same_workspace() -> None:
                     "provider": "wordpress",
                     "label": "Cross workspace",
                     "site_id": outsider_site.json()["id"],
-                    "credentials": {
-                        "url": "https://example.com",
-                        "username": "operator",
-                        "application_password": "application-password",
-                    },
+                    "credentials": _wordpress_credentials("application-password"),
                 },
             )
             assert cross_workspace.status_code == 404
