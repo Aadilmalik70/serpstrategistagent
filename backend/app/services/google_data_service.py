@@ -80,12 +80,12 @@ def connection_response(connection: GoogleDataConnection | None) -> GoogleDataCo
 async def get_connection(
     db: AsyncSession,
     workspace_id: uuid.UUID,
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
 ) -> GoogleDataConnection | None:
+    del user_id
     return await db.scalar(
         select(GoogleDataConnection).where(
             GoogleDataConnection.workspace_id == workspace_id,
-            GoogleDataConnection.user_id == user_id,
         )
     )
 
@@ -97,11 +97,13 @@ async def start_google_oauth(
 ) -> str:
     settings = get_settings()
     client_id, _, redirect_uri, _ = _oauth_config()
-    connection = await get_connection(db, workspace_id, user_id)
+    connection = await get_connection(db, workspace_id)
     if connection is None:
         connection = GoogleDataConnection(workspace_id=workspace_id, user_id=user_id)
         db.add(connection)
         await db.flush()
+    else:
+        connection.user_id = user_id
 
     state = secrets.token_urlsafe(32)
     connection.oauth_state_hash = _hash(state)
