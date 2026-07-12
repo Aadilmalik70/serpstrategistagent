@@ -48,6 +48,7 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/serpstrategist_test
       REDIS_URL: redis://localhost:6379/0
       SECRET_KEY: ci-only-secret-key-with-more-than-thirty-two-characters
+      OAUTH_BRIDGE_SECRET: ci-oauth-bridge-secret-with-more-than-thirty-two-characters
       SCHEDULER_ENABLED: "false"
       LIBRECRAWL_ENABLED: "false"
     steps:
@@ -76,8 +77,7 @@ jobs:
       NEXT_PUBLIC_API_URL: http://localhost:8000
       NEXTAUTH_URL: http://localhost:3000
       NEXTAUTH_SECRET: ci-nextauth-secret
-      AUTH_EMAIL: admin@example.com
-      AUTH_PASSWORD: ci-password
+      OAUTH_BRIDGE_SECRET: ci-oauth-bridge-secret-with-more-than-thirty-two-characters
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
