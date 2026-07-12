@@ -65,8 +65,8 @@ export default function WorkspaceSwitcher() {
         </svg>
       </div>
       <Link
-        href="/settings/workspace"
-        aria-label="Manage workspaces"
+        href="/settings"
+        aria-label="Open settings"
         className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-[rgba(32,32,32,0.16)] bg-white text-[#202020] transition hover:border-[#202020] hover:bg-[#202020] hover:text-white"
       >
         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
