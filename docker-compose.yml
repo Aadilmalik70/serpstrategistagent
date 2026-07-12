@@ -39,6 +39,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: local-development-secret-key-change-before-deploy
       OAUTH_BRIDGE_SECRET: local-oauth-bridge-secret-change-before-deploy
+      CREDENTIAL_ENCRYPTION_KEY: local-credential-encryption-key-change-before-deploy
       SCHEDULER_ENABLED: "false"
     command: >-
       sh -c "alembic upgrade head &&
