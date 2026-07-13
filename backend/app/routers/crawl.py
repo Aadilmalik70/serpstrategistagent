@@ -45,14 +45,14 @@ def _snapshot_error(snapshot: CrawlSnapshot | None) -> str | None:
     return None
 
 
-async def _run_crawl_background(
+async def run_crawl_job(
     workspace_id: uuid.UUID,
     site_id: uuid.UUID,
     domain: str,
     max_pages: int,
     job_id: uuid.UUID,
 ) -> None:
-    """Run the first-party crawl and persist every terminal job state."""
+    """Run one persisted first-party crawl job and record every terminal state."""
     try:
         async with async_session_factory() as db:
             job = await db.get(JobQueue, job_id)
@@ -213,7 +213,7 @@ async def start_crawl(
     await db.refresh(job)
 
     background_tasks.add_task(
-        _run_crawl_background,
+        run_crawl_job,
         context.workspace.id,
         site.id,
         site.domain,
