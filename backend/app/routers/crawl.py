@@ -78,12 +78,14 @@ async def run_crawl_job(
             if not job or not site:
                 return
 
+            crawl_error = _snapshot_error(snapshot)
             result = {
                 "adapter": "first_party",
                 "snapshot_id": str(snapshot.id),
                 "pages_discovered": int(snapshot.pages_discovered or 0),
                 "pages_crawled": pages_crawled,
                 "errors": int(snapshot.errors or 0),
+                "error": crawl_error,
                 "details": snapshot.extracted_data or {},
             }
             job.result = result
