@@ -17,8 +17,14 @@ interface SiteHeaderProps {
   onCrawlComplete?: () => void;
 }
 
-type AgentRun = { run_id: string };
-type AgentStatus = { status: string; summary?: string | null; error?: string | null };
+type AgentRun = { run_id: string; status: string };
+type AgentStatus = {
+  status: string;
+  summary?: string | null;
+  error?: string | null;
+  pages_analyzed?: number;
+  meta?: { phase?: string; crawl_job_id?: string };
+};
 type CrawlStart = { job_id: string; status: string; reused?: boolean };
 type CrawlStatus = {
   status: string;
@@ -87,24 +93,35 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
     if (runningAgent || runningCrawl) return;
     setRunningAgent(true);
     setStatusError(false);
-    try {
-      if (site.page_count === 0) {
-        const crawled = await startCrawl();
-        if (!crawled) return;
-      }
+    setStatusMessage(site.page_count > 0 ? "Starting analysis…" : "Starting crawl before analysis…");
 
-      setStatusMessage("Analyzing crawled pages…");
+    try {
       const data = await apiFetch<AgentRun>("/agent/run", {
         method: "POST",
         body: JSON.stringify({ site_id: site.id }),
       });
 
-      for (let attempt = 0; attempt < 240; attempt += 1) {
+      for (let attempt = 0; attempt < 480; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 1250));
         const run = await apiFetch<AgentStatus>(`/agent/run/${data.run_id}`);
+
+        if (run.status === "crawling") {
+          setStatusMessage(run.summary || "Crawling the site before analysis…");
+          continue;
+        }
+        if (run.status === "running") {
+          setStatusMessage(run.summary || "Analyzing crawled pages…");
+          continue;
+        }
         if (run.status === "completed") {
+          if ((run.pages_analyzed ?? 0) < 1) {
+            setStatusError(true);
+            setStatusMessage(run.summary || "No pages were available for analysis.");
+            return;
+          }
           setStatusMessage(run.summary || "Agent analysis completed.");
           onAgentComplete?.();
+          onCrawlComplete?.();
           return;
         }
         if (run.status === "failed") {
@@ -113,6 +130,7 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
           return;
         }
       }
+
       setStatusError(true);
       setStatusMessage("The analysis is still running. Refresh to check the latest status.");
     } catch (error) {
@@ -154,7 +172,7 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
               disabled={runningAgent || runningCrawl}
               className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
             >
-              {runningAgent ? "Analyzing…" : "Run Agent"}
+              {runningAgent ? "Working…" : "Run Agent"}
             </button>
           </div>
           {statusMessage && (
