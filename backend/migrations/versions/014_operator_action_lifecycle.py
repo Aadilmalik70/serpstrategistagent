@@ -14,88 +14,67 @@ branch_labels = None
 depends_on = None
 
 
+ACTION_COLUMNS = [
+    sa.Column("workspace_id", UUID(as_uuid=True), nullable=True),
+    sa.Column("category", sa.String(length=64), server_default="technical", nullable=False),
+    sa.Column("source", sa.String(length=64), server_default="legacy", nullable=False),
+    sa.Column("evidence", JSONB(), server_default=sa.text("'[]'::jsonb"), nullable=False),
+    sa.Column("plan", JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
+    sa.Column("impact_score", sa.Integer(), server_default="0", nullable=False),
+    sa.Column("confidence_score", sa.Integer(), server_default="0", nullable=False),
+    sa.Column("effort_score", sa.Integer(), server_default="0", nullable=False),
+    sa.Column("risk_score", sa.Integer(), server_default="0", nullable=False),
+    sa.Column("risk_level", sa.String(length=16), server_default="low", nullable=False),
+    sa.Column("approval_policy", JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
+    sa.Column("requires_approval", sa.Boolean(), server_default=sa.text("true"), nullable=False),
+    sa.Column("execution_target", JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
+    sa.Column("proposed_diff", JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
+    sa.Column("rollback_plan", JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
+    sa.Column("measurement_plan", JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
+    sa.Column("validation_checklist", JSONB(), server_default=sa.text("'[]'::jsonb"), nullable=False),
+    sa.Column("idempotency_key", sa.String(length=128), nullable=True),
+    sa.Column("version", sa.Integer(), server_default="1", nullable=False),
+    sa.Column("created_by_user_id", UUID(as_uuid=True), nullable=True),
+    sa.Column("approved_by_user_id", UUID(as_uuid=True), nullable=True),
+    sa.Column("rejected_by_user_id", UUID(as_uuid=True), nullable=True),
+    sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+    sa.Column("proposed_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("rejected_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("rejection_reason", sa.String(length=1000), nullable=True),
+    sa.Column("execution_started_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("failed_at", sa.DateTime(timezone=True), nullable=True),
+]
+
+
 def upgrade() -> None:
     op.rename_table("fix_actions", "operator_actions")
+    for column in ACTION_COLUMNS:
+        op.add_column("operator_actions", column)
 
-    op.add_column("operator_actions", sa.Column("workspace_id", UUID(as_uuid=True), nullable=True))
-    op.add_column("operator_actions", sa.Column("category", sa.String(length=64), server_default="technical", nullable=False))
-    op.add_column("operator_actions", sa.Column("source", sa.String(length=64), server_default="legacy", nullable=False))
-    op.add_column("operator_actions", sa.Column("evidence", JSONB(), server_default=sa.text("'[]'::jsonb"), nullable=False))
-    op.add_column("operator_actions", sa.Column("plan", JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False))
-    op.add_column("operator_actions", sa.Column("impact_score", sa.Integer(), server_default="0", nullable=False))
-    op.add_column("operator_actions", sa.Column("confidence_score", sa.Integer(), server_default="0", nullable=False))
-    op.add_column("operator_actions", sa.Column("effort_score", sa.Integer(), server_default="0", nullable=False))
-    op.add_column("operator_actions", sa.Column("risk_score", sa.Integer(), server_default="0", nullable=False))
-    op.add_column("operator_actions", sa.Column("risk_level", sa.String(length=16), server_default="low", nullable=False))
-    op.add_column("operator_actions", sa.Column("approval_policy", JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False))
-    op.add_column("operator_actions", sa.Column("requires_approval", sa.Boolean(), server_default=sa.text("true"), nullable=False))
-    op.add_column("operator_actions", sa.Column("execution_target", JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False))
-    op.add_column("operator_actions", sa.Column("proposed_diff", JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False))
-    op.add_column("operator_actions", sa.Column("rollback_plan", JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False))
-    op.add_column("operator_actions", sa.Column("measurement_plan", JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False))
-    op.add_column("operator_actions", sa.Column("validation_checklist", JSONB(), server_default=sa.text("'[]'::jsonb"), nullable=False))
-    op.add_column("operator_actions", sa.Column("idempotency_key", sa.String(length=128), nullable=True))
-    op.add_column("operator_actions", sa.Column("version", sa.Integer(), server_default="1", nullable=False))
-    op.add_column("operator_actions", sa.Column("created_by_user_id", UUID(as_uuid=True), nullable=True))
-    op.add_column("operator_actions", sa.Column("approved_by_user_id", UUID(as_uuid=True), nullable=True))
-    op.add_column("operator_actions", sa.Column("rejected_by_user_id", UUID(as_uuid=True), nullable=True))
-    op.add_column("operator_actions", sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False))
-    op.add_column("operator_actions", sa.Column("proposed_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("operator_actions", sa.Column("rejected_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("operator_actions", sa.Column("rejection_reason", sa.String(length=1000), nullable=True))
-    op.add_column("operator_actions", sa.Column("execution_started_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("operator_actions", sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("operator_actions", sa.Column("failed_at", sa.DateTime(timezone=True), nullable=True))
+    for name, column in (
+        ("fk_operator_actions_workspace", "workspace_id"),
+        ("fk_operator_actions_created_by", "created_by_user_id"),
+        ("fk_operator_actions_approved_by", "approved_by_user_id"),
+        ("fk_operator_actions_rejected_by", "rejected_by_user_id"),
+    ):
+        target = "workspaces" if column == "workspace_id" else "users"
+        op.create_foreign_key(
+            name,
+            "operator_actions",
+            target,
+            [column],
+            ["id"],
+            ondelete="CASCADE" if column == "workspace_id" else "SET NULL",
+        )
 
-    op.create_foreign_key(
-        "fk_operator_actions_workspace",
-        "operator_actions",
-        "workspaces",
-        ["workspace_id"],
-        ["id"],
-        ondelete="CASCADE",
-    )
-    op.create_foreign_key(
-        "fk_operator_actions_created_by",
-        "operator_actions",
-        "users",
-        ["created_by_user_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
-    op.create_foreign_key(
-        "fk_operator_actions_approved_by",
-        "operator_actions",
-        "users",
-        ["approved_by_user_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
-    op.create_foreign_key(
-        "fk_operator_actions_rejected_by",
-        "operator_actions",
-        "users",
-        ["rejected_by_user_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
-
+    # PostgreSQL does not allow the UPDATE target alias to be referenced inside
+    # a JOIN's ON clause. Backfill site-owned fields first, then issue evidence.
     op.execute(
         """
         UPDATE operator_actions AS action
         SET workspace_id = site.workspace_id,
             source = 'legacy_fix_action',
-            category = COALESCE(issue.category, 'technical'),
-            evidence = CASE
-                WHEN action.issue_id IS NULL THEN '[]'::jsonb
-                ELSE jsonb_build_array(jsonb_build_object(
-                    'type', 'legacy_issue',
-                    'issue_id', action.issue_id::text,
-                    'title', issue.title,
-                    'severity', issue.severity,
-                    'affected_url', issue.affected_url
-                ))
-            END,
             plan = COALESCE(action.fix_content, '{}'::jsonb),
             risk_level = COALESCE(action.fix_content->'governance'->>'risk_level', 'medium'),
             requires_approval = COALESCE(
@@ -111,8 +90,22 @@ def upgrade() -> None:
             completed_at = CASE WHEN action.status = 'completed' THEN action.executed_at ELSE NULL END,
             failed_at = CASE WHEN action.status = 'failed' THEN action.executed_at ELSE NULL END
         FROM sites AS site
-        LEFT JOIN issues AS issue ON issue.id = action.issue_id
         WHERE site.id = action.site_id
+        """
+    )
+    op.execute(
+        """
+        UPDATE operator_actions AS action
+        SET category = issue.category,
+            evidence = jsonb_build_array(jsonb_build_object(
+                'type', 'legacy_issue',
+                'issue_id', issue.id::text,
+                'title', issue.title,
+                'severity', issue.severity,
+                'affected_url', issue.affected_url
+            ))
+        FROM issues AS issue
+        WHERE issue.id = action.issue_id
         """
     )
 
@@ -121,16 +114,15 @@ def upgrade() -> None:
         "operator_actions",
         ["workspace_id", "idempotency_key"],
     )
-    op.create_index("ix_operator_actions_workspace_id", "operator_actions", ["workspace_id"])
-    op.create_index("ix_operator_actions_site_id", "operator_actions", ["site_id"])
-    op.create_index("ix_operator_actions_issue_id", "operator_actions", ["issue_id"])
-    op.create_index("ix_operator_actions_status", "operator_actions", ["status"])
-    op.create_index("ix_operator_actions_risk_level", "operator_actions", ["risk_level"])
-    op.create_index(
-        "ix_operator_actions_queue",
-        "operator_actions",
-        ["workspace_id", "status", "risk_level", "created_at"],
-    )
+    for name, columns in (
+        ("ix_operator_actions_workspace_id", ["workspace_id"]),
+        ("ix_operator_actions_site_id", ["site_id"]),
+        ("ix_operator_actions_issue_id", ["issue_id"]),
+        ("ix_operator_actions_status", ["status"]),
+        ("ix_operator_actions_risk_level", ["risk_level"]),
+        ("ix_operator_actions_queue", ["workspace_id", "status", "risk_level", "created_at"]),
+    ):
+        op.create_index(name, "operator_actions", columns)
 
     op.create_table(
         "operator_action_events",
@@ -151,29 +143,31 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["actor_user_id"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_operator_action_events_action_id", "operator_action_events", ["action_id"])
-    op.create_index("ix_operator_action_events_workspace_id", "operator_action_events", ["workspace_id"])
-    op.create_index("ix_operator_action_events_site_id", "operator_action_events", ["site_id"])
-    op.create_index("ix_operator_action_events_event_type", "operator_action_events", ["event_type"])
+    for name, columns in (
+        ("ix_operator_action_events_action_id", ["action_id"]),
+        ("ix_operator_action_events_workspace_id", ["workspace_id"]),
+        ("ix_operator_action_events_site_id", ["site_id"]),
+        ("ix_operator_action_events_event_type", ["event_type"]),
+    ):
+        op.create_index(name, "operator_action_events", columns)
 
     op.execute(
         """
-        CREATE OR REPLACE FUNCTION prevent_operator_action_event_mutation()
+        CREATE FUNCTION prevent_operator_action_event_mutation()
         RETURNS trigger AS $$
         BEGIN
             RAISE EXCEPTION 'operator_action_events is append-only';
         END;
-        $$ LANGUAGE plpgsql;
+        $$ LANGUAGE plpgsql
         """
     )
     op.execute(
         """
         CREATE TRIGGER operator_action_events_append_only
         BEFORE UPDATE OR DELETE ON operator_action_events
-        FOR EACH ROW EXECUTE FUNCTION prevent_operator_action_event_mutation();
+        FOR EACH ROW EXECUTE FUNCTION prevent_operator_action_event_mutation()
         """
     )
-
     op.execute(
         """
         INSERT INTO operator_action_events (
@@ -190,57 +184,35 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS operator_action_events_append_only ON operator_action_events")
     op.execute("DROP FUNCTION IF EXISTS prevent_operator_action_event_mutation()")
-    op.drop_index("ix_operator_action_events_event_type", table_name="operator_action_events")
-    op.drop_index("ix_operator_action_events_site_id", table_name="operator_action_events")
-    op.drop_index("ix_operator_action_events_workspace_id", table_name="operator_action_events")
-    op.drop_index("ix_operator_action_events_action_id", table_name="operator_action_events")
+    for name in (
+        "ix_operator_action_events_event_type",
+        "ix_operator_action_events_site_id",
+        "ix_operator_action_events_workspace_id",
+        "ix_operator_action_events_action_id",
+    ):
+        op.drop_index(name, table_name="operator_action_events")
     op.drop_table("operator_action_events")
 
-    op.drop_index("ix_operator_actions_queue", table_name="operator_actions")
-    op.drop_index("ix_operator_actions_risk_level", table_name="operator_actions")
-    op.drop_index("ix_operator_actions_status", table_name="operator_actions")
-    op.drop_index("ix_operator_actions_issue_id", table_name="operator_actions")
-    op.drop_index("ix_operator_actions_site_id", table_name="operator_actions")
-    op.drop_index("ix_operator_actions_workspace_id", table_name="operator_actions")
+    for name in (
+        "ix_operator_actions_queue",
+        "ix_operator_actions_risk_level",
+        "ix_operator_actions_status",
+        "ix_operator_actions_issue_id",
+        "ix_operator_actions_site_id",
+        "ix_operator_actions_workspace_id",
+    ):
+        op.drop_index(name, table_name="operator_actions")
     op.drop_constraint("uq_operator_actions_workspace_idempotency", "operator_actions", type_="unique")
-    op.drop_constraint("fk_operator_actions_rejected_by", "operator_actions", type_="foreignkey")
-    op.drop_constraint("fk_operator_actions_approved_by", "operator_actions", type_="foreignkey")
-    op.drop_constraint("fk_operator_actions_created_by", "operator_actions", type_="foreignkey")
-    op.drop_constraint("fk_operator_actions_workspace", "operator_actions", type_="foreignkey")
+    for name in (
+        "fk_operator_actions_rejected_by",
+        "fk_operator_actions_approved_by",
+        "fk_operator_actions_created_by",
+        "fk_operator_actions_workspace",
+    ):
+        op.drop_constraint(name, "operator_actions", type_="foreignkey")
 
-    for column in [
-        "failed_at",
-        "completed_at",
-        "execution_started_at",
-        "rejection_reason",
-        "rejected_at",
-        "proposed_at",
-        "updated_at",
-        "rejected_by_user_id",
-        "approved_by_user_id",
-        "created_by_user_id",
-        "version",
-        "idempotency_key",
-        "validation_checklist",
-        "measurement_plan",
-        "rollback_plan",
-        "proposed_diff",
-        "execution_target",
-        "requires_approval",
-        "approval_policy",
-        "risk_level",
-        "risk_score",
-        "effort_score",
-        "confidence_score",
-        "impact_score",
-        "plan",
-        "evidence",
-        "source",
-        "category",
-        "workspace_id",
-    ]:
-        op.drop_column("operator_actions", column)
-
+    for column in reversed(ACTION_COLUMNS):
+        op.drop_column("operator_actions", column.name)
     op.execute(
         """
         UPDATE operator_actions
