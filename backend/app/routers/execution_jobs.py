@@ -1,11 +1,13 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies.workspace import WorkspaceContext, get_current_workspace, require_workspace_role
+from app.models.execution import ExecutionSnapshot
 from app.schemas.execution import (
     ExecutionAttemptResponse,
     ExecutionEnqueueRequest,
@@ -35,6 +37,11 @@ settings = get_settings()
 
 def _service_error(exc: ExecutionServiceError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+def _test_environment_only() -> None:
+    if settings.app_env.lower() != "test":
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 @action_router.post(
@@ -111,9 +118,51 @@ async def run_test_execution_worker_once(
 ) -> dict[str, int]:
     """Run one worker tick only inside the automated test environment."""
     require_workspace_role(context, "owner")
-    if settings.app_env.lower() != "test":
-        raise HTTPException(status_code=404, detail="Not found")
+    _test_environment_only()
     return {"processed": await run_execution_worker_tick()}
+
+
+@job_router.post("/test/snapshot-immutability/{snapshot_id}")
+async def verify_test_snapshot_immutability(
+    snapshot_id: uuid.UUID,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, bool]:
+    """Exercise the PostgreSQL append-only trigger in the application event loop."""
+    require_workspace_role(context, "owner")
+    _test_environment_only()
+    snapshot = await db.scalar(
+        select(ExecutionSnapshot).where(
+            ExecutionSnapshot.id == snapshot_id,
+            ExecutionSnapshot.workspace_id == context.workspace.id,
+        )
+    )
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+
+    update_blocked = False
+    delete_blocked = False
+    try:
+        await db.execute(
+            text("UPDATE execution_snapshots SET snapshot_type = 'tampered' WHERE id = :id"),
+            {"id": snapshot_id},
+        )
+        await db.commit()
+    except Exception:
+        update_blocked = True
+        await db.rollback()
+
+    try:
+        await db.execute(
+            text("DELETE FROM execution_snapshots WHERE id = :id"),
+            {"id": snapshot_id},
+        )
+        await db.commit()
+    except Exception:
+        delete_blocked = True
+        await db.rollback()
+
+    return {"update_blocked": update_blocked, "delete_blocked": delete_blocked}
 
 
 @job_router.get("/{job_id}", response_model=ExecutionJobDetailResponse)
