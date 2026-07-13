@@ -11,9 +11,13 @@ ActionStatus = Literal[
     "approved",
     "rejected",
     "blocked",
+    "execution_queued",
     "executing",
+    "validating",
     "succeeded",
     "failed",
+    "rollback_queued",
+    "rolling_back",
     "cancelled",
     "rolled_back",
 ]
