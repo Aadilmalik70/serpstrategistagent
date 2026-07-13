@@ -3,52 +3,131 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { apiFetch } from "@/lib/api";
+import { apiFetch, OperatorApiError } from "@/lib/api";
 
 interface SiteHeaderProps {
   site: {
     id: string;
     name: string;
     domain: string;
+    page_count: number;
+    status: string;
   };
   onAgentComplete?: () => void;
+  onCrawlComplete?: () => void;
 }
 
 type AgentRun = { run_id: string };
-type AgentStatus = { status: string };
+type AgentStatus = { status: string; summary?: string | null; error?: string | null };
+type CrawlStart = { job_id: string; status: string; reused?: boolean };
+type CrawlStatus = {
+  status: string;
+  pages_discovered: number;
+  pages_crawled: number;
+  errors: number;
+  error: string | null;
+};
 
-export default function SiteHeader({ site, onAgentComplete }: SiteHeaderProps) {
-  const [running, setRunning] = useState(false);
+const TERMINAL_CRAWL_STATES = new Set(["completed", "failed", "cancelled"]);
+
+export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: SiteHeaderProps) {
+  const [runningAgent, setRunningAgent] = useState(false);
+  const [runningCrawl, setRunningCrawl] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("");
+  const [statusError, setStatusError] = useState(false);
+
+  async function waitForCrawl(jobId: string): Promise<boolean> {
+    for (let attempt = 0; attempt < 240; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1250));
+      const crawl = await apiFetch<CrawlStatus>(`/crawl/${jobId}`);
+      setStatusMessage(
+        crawl.status === "completed"
+          ? `Crawl completed: ${crawl.pages_crawled} pages.`
+          : `Crawling: ${crawl.pages_crawled}/${Math.max(crawl.pages_discovered, crawl.pages_crawled)} pages`,
+      );
+      if (TERMINAL_CRAWL_STATES.has(crawl.status)) {
+        if (crawl.status === "completed" && crawl.pages_crawled > 0) {
+          setStatusError(false);
+          onCrawlComplete?.();
+          return true;
+        }
+        setStatusError(true);
+        setStatusMessage(crawl.error || "The crawl failed before any page could be stored.");
+        return false;
+      }
+    }
+    setStatusError(true);
+    setStatusMessage("The crawl is still running. Refresh the page to check its latest state.");
+    return false;
+  }
+
+  async function startCrawl(): Promise<boolean> {
+    if (runningCrawl) return false;
+    setRunningCrawl(true);
+    setStatusError(false);
+    setStatusMessage("Starting first-party crawl…");
+    try {
+      const crawl = await apiFetch<CrawlStart>("/crawl/site", {
+        method: "POST",
+        body: JSON.stringify({ site_id: site.id }),
+      });
+      return await waitForCrawl(crawl.job_id);
+    } catch (error) {
+      setStatusError(true);
+      setStatusMessage(
+        error instanceof OperatorApiError ? error.message : "The crawl could not be started.",
+      );
+      return false;
+    } finally {
+      setRunningCrawl(false);
+    }
+  }
 
   async function handleRunAgent() {
-    setRunning(true);
+    if (runningAgent || runningCrawl) return;
+    setRunningAgent(true);
+    setStatusError(false);
     try {
+      if (site.page_count === 0) {
+        const crawled = await startCrawl();
+        if (!crawled) return;
+      }
+
+      setStatusMessage("Analyzing crawled pages…");
       const data = await apiFetch<AgentRun>("/agent/run", {
         method: "POST",
         body: JSON.stringify({ site_id: site.id }),
       });
 
-      const pollInterval = window.setInterval(async () => {
-        try {
-          const run = await apiFetch<AgentStatus>(`/agent/run/${data.run_id}`);
-          if (run.status === "completed" || run.status === "failed") {
-            window.clearInterval(pollInterval);
-            setRunning(false);
-            onAgentComplete?.();
-          }
-        } catch {
-          window.clearInterval(pollInterval);
-          setRunning(false);
+      for (let attempt = 0; attempt < 240; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1250));
+        const run = await apiFetch<AgentStatus>(`/agent/run/${data.run_id}`);
+        if (run.status === "completed") {
+          setStatusMessage(run.summary || "Agent analysis completed.");
+          onAgentComplete?.();
+          return;
         }
-      }, 1000);
-    } catch {
-      setRunning(false);
+        if (run.status === "failed") {
+          setStatusError(true);
+          setStatusMessage(run.error || run.summary || "Agent analysis failed.");
+          return;
+        }
+      }
+      setStatusError(true);
+      setStatusMessage("The analysis is still running. Refresh to check the latest status.");
+    } catch (error) {
+      setStatusError(true);
+      setStatusMessage(
+        error instanceof OperatorApiError ? error.message : "The agent could not be started.",
+      );
+    } finally {
+      setRunningAgent(false);
     }
   }
 
   return (
-    <header className="bg-white border-b border-gray-200 px-6 py-4">
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
+    <header className="border-b border-gray-200 bg-white px-4 py-4 sm:px-6">
+      <div className="mx-auto flex max-w-7xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
           <Link href="/" className="text-sm text-gray-500 hover:text-gray-700">
             ← Back
@@ -58,17 +137,32 @@ export default function SiteHeader({ site, onAgentComplete }: SiteHeaderProps) {
             <p className="text-sm text-gray-500">{site.domain}</p>
           </div>
         </div>
-        <button
-          onClick={handleRunAgent}
-          disabled={running}
-          className={`px-4 py-2 rounded-md text-sm font-medium ${
-            running
-              ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-              : "bg-blue-600 text-white hover:bg-blue-700"
-          }`}
-        >
-          {running ? "Analyzing..." : "Run Agent"}
-        </button>
+
+        <div className="flex flex-col items-stretch gap-2 sm:items-end">
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            <button
+              type="button"
+              onClick={() => void startCrawl()}
+              disabled={runningCrawl || runningAgent}
+              className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {runningCrawl ? "Crawling…" : site.page_count > 0 ? "Recrawl Site" : "Crawl Site"}
+            </button>
+            <button
+              type="button"
+              onClick={handleRunAgent}
+              disabled={runningAgent || runningCrawl}
+              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+            >
+              {runningAgent ? "Analyzing…" : "Run Agent"}
+            </button>
+          </div>
+          {statusMessage && (
+            <p className={`max-w-md text-xs ${statusError ? "text-red-600" : "text-gray-500"}`}>
+              {statusMessage}
+            </p>
+          )}
+        </div>
       </div>
     </header>
   );
