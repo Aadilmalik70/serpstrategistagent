@@ -19,6 +19,7 @@ from app.routers import (
     google_data,
     integrations,
     onboarding,
+    operator_actions,
     public_audits,
     site_claims,
     sites,
@@ -44,7 +45,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SERP Strategists Operator API",
-    version="0.7.0",
+    version="0.8.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
@@ -79,14 +80,21 @@ async def quota_exceeded_handler(request: Request, exc: QuotaExceededError):
 
 @app.middleware("http")
 async def enforce_governed_execution(request: Request, call_next):
-    """Disable the legacy direct-Codex endpoint that bypasses operator governance."""
-    if request.url.path.startswith("/actions/codex/"):
+    """Reject every legacy action mutation that bypasses the Phase 3 lifecycle."""
+    path = request.url.path
+    legacy_mutation = (
+        path.startswith("/actions/codex/")
+        or path.startswith("/actions/fix-plan")
+        or path.startswith("/actions/approve-and-execute/")
+        or (path.startswith("/actions/fix/") and request.method.upper() != "GET")
+    )
+    if legacy_mutation:
         return JSONResponse(
             status_code=410,
             content={
                 "detail": (
-                    "Direct code execution is disabled. Create an operator action, "
-                    "apply policy checks, obtain approval where required, and execute through a governed adapter."
+                    "Legacy action mutation is disabled. Create an operator action, apply deterministic "
+                    "policy, record approval where required, and execute through a governed adapter."
                 )
             },
         )
@@ -106,6 +114,7 @@ app.include_router(site_claims.router)
 app.include_router(sites.router)
 app.include_router(crawl.router)
 app.include_router(agent.router)
+app.include_router(operator_actions.router)
 app.include_router(actions.router)
 app.include_router(chat.router)
 
@@ -130,7 +139,7 @@ async def readiness():
         async with engine.connect() as connection:
             await connection.execute(text("SELECT 1"))
         checks["database"] = "ok"
-    except Exception as exc:  # pragma: no cover - exact driver errors vary by environment
+    except Exception as exc:  # pragma: no cover
         checks["database"] = f"error:{type(exc).__name__}"
 
     if settings.redis_url:
@@ -138,7 +147,7 @@ async def readiness():
         try:
             await redis.ping()
             checks["redis"] = "ok"
-        except Exception as exc:  # pragma: no cover - exact driver errors vary by environment
+        except Exception as exc:  # pragma: no cover
             checks["redis"] = f"error:{type(exc).__name__}"
         finally:
             await redis.aclose()
