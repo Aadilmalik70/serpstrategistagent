@@ -4,6 +4,7 @@ from app.models.crawl_snapshot import CrawlSnapshot
 from app.models.job_queue import JobQueue
 from app.models.agent_run import AgentRun
 from app.models.issue import Issue
+from app.models.operator_action import OperatorAction, OperatorActionEvent
 from app.models.fix_action import FixAction
 from app.models.identity import (
     Membership,
@@ -26,6 +27,8 @@ __all__ = [
     "JobQueue",
     "AgentRun",
     "Issue",
+    "OperatorAction",
+    "OperatorActionEvent",
     "FixAction",
     "User",
     "Workspace",
