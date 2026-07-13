@@ -47,10 +47,21 @@ class Settings(BaseSettings):
     wordpress_user: str = ""
     wordpress_app_password: str = ""
 
+    # LibreCrawl remains optional enrichment only. The first-party crawler is authoritative.
     librecrawl_host: str = "127.0.0.1"
     librecrawl_port: int = 5080
     librecrawl_mcp_port: int = 5081
     librecrawl_enabled: bool = False
+
+    # Bounded first-party crawler settings.
+    crawler_user_agent: str = "SERPStrategistsBot/1.0 (+https://serpstrategists.com/bot)"
+    crawler_timeout_seconds: float = 20.0
+    crawler_connect_timeout_seconds: float = 6.0
+    crawler_concurrency: int = 4
+    crawler_request_delay_ms: int = 150
+    crawler_max_response_bytes: int = 2_000_000
+    crawler_max_redirects: int = 5
+    crawler_sitemap_limit: int = 10
 
     app_env: str = "development"
     debug: bool = True
@@ -110,16 +121,23 @@ class Settings(BaseSettings):
             or self.serpapi_timeout_seconds <= 0
             or self.stripe_timeout_seconds <= 0
             or self.google_integration_timeout_seconds <= 0
+            or self.crawler_timeout_seconds <= 0
+            or self.crawler_connect_timeout_seconds <= 0
         ):
-            raise ValueError("Provider timeouts must be greater than zero")
+            raise ValueError("Provider and crawler timeouts must be greater than zero")
         if (
             self.execution_worker_poll_seconds <= 0
             or self.execution_worker_batch_size <= 0
             or self.execution_job_lease_seconds <= 0
             or self.execution_job_max_attempts <= 0
             or self.execution_retry_base_seconds <= 0
+            or self.crawler_concurrency <= 0
+            or self.crawler_max_response_bytes <= 0
+            or self.crawler_max_redirects <= 0
+            or self.crawler_sitemap_limit <= 0
+            or self.crawler_request_delay_ms < 0
         ):
-            raise ValueError("Execution worker limits must be greater than zero")
+            raise ValueError("Execution worker and crawler limits must be valid positive values")
         if self.stripe_secret_key and not self.stripe_secret_key.startswith(("sk_test_", "sk_live_")):
             raise ValueError("STRIPE_SECRET_KEY must be a Stripe secret key")
         if self.stripe_webhook_secret and not self.stripe_webhook_secret.startswith("whsec_"):
