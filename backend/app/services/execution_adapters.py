@@ -40,6 +40,7 @@ class ValidationResult:
 
 class ExecutionAdapter(Protocol):
     name: str
+    available: bool
     mutation_enabled: bool
 
     async def capture(self, action: OperatorAction, *, phase: str) -> AdapterSnapshot:
@@ -67,15 +68,10 @@ class ExecutionAdapter(Protocol):
 
 
 class SimulationExecutionAdapter:
-    """Non-mutating adapter used to verify orchestration safely.
-
-    It never contacts a customer system. It records the proposed target/diff as a
-    deterministic simulated revision, allowing the job, snapshot, validation,
-    cancellation, retry, and rollback lifecycles to be exercised before a real
-    GitHub or WordPress adapter is enabled.
-    """
+    """Non-mutating adapter used to verify orchestration safely."""
 
     name = "simulation"
+    available = True
     mutation_enabled = False
 
     async def capture(self, action: OperatorAction, *, phase: str) -> AdapterSnapshot:
@@ -110,6 +106,7 @@ class SimulationExecutionAdapter:
         before: AdapterSnapshot,
         execution_result: dict[str, Any],
     ) -> ValidationResult:
+        del before
         checks: list[dict[str, Any]] = []
         for item in action.validation_checklist or []:
             label = item if isinstance(item, str) else str(item.get("label") or item.get("check") or "Validation check")
@@ -140,6 +137,7 @@ class SimulationExecutionAdapter:
 
 
 class DisabledExecutionAdapter:
+    available = False
     mutation_enabled = False
 
     def __init__(self, name: str):
