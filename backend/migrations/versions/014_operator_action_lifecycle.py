@@ -49,6 +49,16 @@ ACTION_COLUMNS = [
 
 def upgrade() -> None:
     op.rename_table("fix_actions", "operator_actions")
+
+    # A governed action can originate from Search Console, GA4, a public audit,
+    # a manual operator plan, or a future detector without a legacy Issue row.
+    op.alter_column(
+        "operator_actions",
+        "issue_id",
+        existing_type=UUID(as_uuid=True),
+        nullable=True,
+    )
+
     for column in ACTION_COLUMNS:
         op.add_column("operator_actions", column)
 
@@ -222,5 +232,15 @@ def downgrade() -> None:
             ELSE status
         END
         """
+    )
+
+    # Legacy fix_actions required an issue. Actions created from newer evidence
+    # sources cannot be represented in that schema and are removed on downgrade.
+    op.execute("DELETE FROM operator_actions WHERE issue_id IS NULL")
+    op.alter_column(
+        "operator_actions",
+        "issue_id",
+        existing_type=UUID(as_uuid=True),
+        nullable=False,
     )
     op.rename_table("operator_actions", "fix_actions")
