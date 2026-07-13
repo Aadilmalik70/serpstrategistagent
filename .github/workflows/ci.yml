@@ -80,7 +80,21 @@ jobs:
           path: backend/migration.log
           retention-days: 3
       - name: Run tests
-        run: pytest
+        id: backend_tests
+        shell: bash
+        run: |
+          set +e
+          pytest > pytest.log 2>&1
+          code=$?
+          tail -n 240 pytest.log
+          exit $code
+      - name: Upload backend test diagnostics
+        if: failure() && steps.backend_tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-03-pytest-log
+          path: backend/pytest.log
+          retention-days: 3
 
   frontend:
     name: Frontend
