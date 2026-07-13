@@ -15,6 +15,7 @@ from app.routers import (
     billing,
     chat,
     crawl,
+    execution_jobs,
     github_repository,
     google_data,
     integrations,
@@ -26,7 +27,7 @@ from app.routers import (
     workspaces,
 )
 from app.services.entitlement_service import QuotaExceededError
-from app.services.scheduler import start_scheduler, stop_scheduler
+from app.services.scheduler import start_execution_worker, start_scheduler, stop_scheduler
 
 settings = get_settings()
 
@@ -35,17 +36,19 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     if settings.scheduler_enabled:
         start_scheduler()
+    if settings.execution_worker_enabled:
+        start_execution_worker()
 
     yield
 
-    if settings.scheduler_enabled:
+    if settings.scheduler_enabled or settings.execution_worker_enabled:
         stop_scheduler()
     await engine.dispose()
 
 
 app = FastAPI(
     title="SERP Strategists Operator API",
-    version="0.8.0",
+    version="0.9.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
@@ -115,24 +118,25 @@ app.include_router(sites.router)
 app.include_router(crawl.router)
 app.include_router(agent.router)
 app.include_router(operator_actions.router)
+app.include_router(execution_jobs.action_router)
+app.include_router(execution_jobs.job_router)
 app.include_router(actions.router)
 app.include_router(chat.router)
 
 
 @app.get("/health", tags=["system"])
 async def health():
-    """Liveness check: the API process can accept requests."""
     return {
         "status": "ok",
         "service": "serp-strategists-api",
         "version": app.version,
         "environment": settings.app_env,
+        "execution_worker": "enabled" if settings.execution_worker_enabled else "disabled",
     }
 
 
 @app.get("/ready", tags=["system"])
 async def readiness():
-    """Readiness check for database and optional Redis dependencies."""
     checks: dict[str, str] = {}
 
     try:
