@@ -33,7 +33,6 @@ class Settings(BaseSettings):
     stripe_scale_price_id: str = ""
     stripe_timeout_seconds: float = 20.0
 
-    # Incremental Google authorization for GSC and GA4. These are server-only.
     google_integration_client_id: str = ""
     google_integration_client_secret: str = ""
     google_integration_redirect_uri: str = ""
@@ -58,6 +57,15 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
     cors_origins: str = ""
     scheduler_enabled: bool = False
+
+    # Durable governed execution. Disabled by default until explicitly enabled on a worker service.
+    execution_worker_enabled: bool = False
+    execution_worker_poll_seconds: int = 5
+    execution_worker_batch_size: int = 5
+    execution_job_lease_seconds: int = 120
+    execution_job_max_attempts: int = 3
+    execution_retry_base_seconds: int = 5
+    execution_queue_key: str = "serp:execution:ready"
 
     @field_validator("database_url", mode="before")
     @classmethod
@@ -104,6 +112,14 @@ class Settings(BaseSettings):
             or self.google_integration_timeout_seconds <= 0
         ):
             raise ValueError("Provider timeouts must be greater than zero")
+        if (
+            self.execution_worker_poll_seconds <= 0
+            or self.execution_worker_batch_size <= 0
+            or self.execution_job_lease_seconds <= 0
+            or self.execution_job_max_attempts <= 0
+            or self.execution_retry_base_seconds <= 0
+        ):
+            raise ValueError("Execution worker limits must be greater than zero")
         if self.stripe_secret_key and not self.stripe_secret_key.startswith(("sk_test_", "sk_live_")):
             raise ValueError("STRIPE_SECRET_KEY must be a Stripe secret key")
         if self.stripe_webhook_secret and not self.stripe_webhook_secret.startswith("whsec_"):
