@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import get_db
 from app.dependencies.workspace import WorkspaceContext, get_current_workspace, require_workspace_role
 from app.schemas.execution import (
@@ -23,11 +24,13 @@ from app.services.execution_service import (
     list_execution_snapshots,
     list_job_attempts,
     request_job_cancellation,
+    run_execution_worker_tick,
     snapshot_to_dict,
 )
 
 job_router = APIRouter(prefix="/execution-jobs", tags=["execution-jobs"])
 action_router = APIRouter(prefix="/operator-actions", tags=["operator-actions"])
+settings = get_settings()
 
 
 def _service_error(exc: ExecutionServiceError) -> HTTPException:
@@ -100,6 +103,17 @@ async def get_execution_job_queue(
         limit=limit,
     )
     return [ExecutionJobResponse(**job_to_dict(job)) for job in jobs]
+
+
+@job_router.post("/worker/run-once")
+async def run_test_execution_worker_once(
+    context: WorkspaceContext = Depends(get_current_workspace),
+) -> dict[str, int]:
+    """Run one worker tick only inside the automated test environment."""
+    require_workspace_role(context, "owner")
+    if settings.app_env.lower() != "test":
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"processed": await run_execution_worker_tick()}
 
 
 @job_router.get("/{job_id}", response_model=ExecutionJobDetailResponse)
