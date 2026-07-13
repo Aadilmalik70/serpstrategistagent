@@ -181,5 +181,7 @@ def get_execution_adapter(name: str) -> ExecutionAdapter:
     if normalized == "simulation":
         return SimulationExecutionAdapter()
     if normalized in {"github", "wordpress"}:
-        return DisabledExecutionAdapter(normalized)
+        raise ExecutionAdapterUnavailable(
+            f"The {normalized} execution adapter is installed as a contract only and is not enabled for mutations."
+        )
     raise ExecutionAdapterUnavailable(f"Unknown execution adapter: {normalized or 'not specified'}")
