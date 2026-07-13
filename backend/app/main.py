@@ -19,6 +19,7 @@ from app.routers import (
     google_data,
     integrations,
     onboarding,
+    public_audits,
     site_claims,
     sites,
     workspaces,
@@ -43,7 +44,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SERP Strategists Operator API",
-    version="0.6.0",
+    version="0.7.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
@@ -92,6 +93,7 @@ async def enforce_governed_execution(request: Request, call_next):
     return await call_next(request)
 
 
+app.include_router(public_audits.router)
 app.include_router(auth.router)
 app.include_router(workspaces.router)
 app.include_router(billing.router)
