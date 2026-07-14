@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse
 
@@ -52,3 +53,13 @@ class FreeAuditResponse(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     retry_after_seconds: int | None = None
+
+
+class FreeAuditClaimResponse(BaseModel):
+    site_id: uuid.UUID
+    domain: str
+    crawl_job_id: uuid.UUID
+    crawl_status: str
+    reused_site: bool
+    reused_crawl: bool
+    claimed_at: datetime
