@@ -700,7 +700,15 @@ async def run_technical_finding_pipeline(
     actions_created = 0
     if site.workspace_id:
         await _cancel_stale_actions(db, site.workspace_id, resolved)
-        for finding in actionable:
+        # Ensure an interrupted prior run cannot leave an active finding without
+        # its governed action. Idempotency keeps this safe on every refresh.
+        active_findings = list((await db.execute(
+            select(Issue).where(
+                Issue.site_id == site.id,
+                Issue.status.in_(ACTIVE_FINDING_STATUSES),
+            )
+        )).scalars().all())
+        for finding in active_findings:
             action, created = await ensure_action_for_finding(
                 db,
                 workspace_id=site.workspace_id,
