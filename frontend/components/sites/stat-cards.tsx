@@ -27,11 +27,11 @@ const gradeColors: Record<string, string> = {
 
 export default function StatCards({ site }: StatCardsProps) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-      <div className="bg-white rounded-lg border border-gray-200 p-5">
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+      <div className="rounded-lg border border-gray-200 bg-white p-5">
         <p className="text-sm text-gray-500">Health Score</p>
         {site.health_score !== null ? (
-          <div className="flex items-baseline gap-2 mt-1">
+          <div className="mt-1 flex items-baseline gap-2">
             <p className={`text-2xl font-bold ${gradeColors[site.health_grade || "F"] || "text-gray-900"}`}>
               {site.health_score}/100
             </p>
@@ -40,32 +40,33 @@ export default function StatCards({ site }: StatCardsProps) {
             </span>
           </div>
         ) : (
-          <p className="text-2xl font-bold mt-1 text-gray-400">—</p>
+          <div className="mt-1">
+            <p className="text-2xl font-bold text-gray-400">—</p>
+            <p className="mt-1 text-xs text-gray-400">Available after crawl and analysis</p>
+          </div>
         )}
       </div>
-      <div className="bg-white rounded-lg border border-gray-200 p-5">
+      <div className="rounded-lg border border-gray-200 bg-white p-5">
         <p className="text-sm text-gray-500">Pages Discovered</p>
-        <p className="text-2xl font-bold mt-1">{site.page_count}</p>
+        <p className="mt-1 text-2xl font-bold">{site.page_count}</p>
       </div>
-      <div className="bg-white rounded-lg border border-gray-200 p-5">
+      <div className="rounded-lg border border-gray-200 bg-white p-5">
         <p className="text-sm text-gray-500">Issues Found</p>
-        <p className="text-2xl font-bold mt-1">
+        <p className="mt-1 text-2xl font-bold">
           {site.issue_count || site.latest_run?.issues_found || "—"}
         </p>
       </div>
-      <div className="bg-white rounded-lg border border-gray-200 p-5">
-        <div className="flex items-center justify-between">
+      <div className="rounded-lg border border-gray-200 bg-white p-5">
+        <div className="flex items-center justify-between gap-2">
           <p className="text-sm text-gray-500">Status</p>
-          {site.librecrawl_enabled && (
-            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">
-              LibreCrawl
-            </span>
-          )}
+          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+            First-party crawler
+          </span>
         </div>
-        <p className="text-2xl font-bold mt-1 capitalize">{site.status}</p>
+        <p className="mt-1 text-2xl font-bold capitalize">{site.status.replaceAll("_", " ")}</p>
         {site.latest_run?.completed_at && (
-          <p className="text-xs text-gray-400 mt-1">
-            Last run: {new Date(site.latest_run.completed_at).toLocaleString()}
+          <p className="mt-1 text-xs text-gray-400">
+            Last analysis: {new Date(site.latest_run.completed_at).toLocaleString()}
           </p>
         )}
       </div>

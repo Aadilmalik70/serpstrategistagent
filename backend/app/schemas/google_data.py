@@ -1,4 +1,6 @@
 from datetime import datetime
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -9,6 +11,9 @@ class GoogleDataConnectionResponse(BaseModel):
     gsc_property: str | None
     ga4_property_id: str | None
     ga4_property_name: str | None
+    baseline_status: str
+    baseline_summary: dict[str, Any]
+    last_synced_at: datetime | None
     connected_at: datetime | None
     last_refreshed_at: datetime | None
     last_error: str | None

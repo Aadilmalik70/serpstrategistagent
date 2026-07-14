@@ -16,6 +16,11 @@ type SiteSummary = {
   status: string;
 };
 
+type ActionQueueSummary = {
+  total: number;
+  counts_by_status: Record<string, number>;
+};
+
 export default function Dashboard() {
   const { data: session, status } = useSession();
   const canUseApi = Boolean(session?.accessToken && session.workspaceId);
@@ -23,9 +28,14 @@ export default function Dashboard() {
     canUseApi ? "/sites" : null,
     apiFetch,
   );
+  const { data: actionQueue } = useSWR<ActionQueueSummary>(
+    canUseApi ? "/operator-actions?limit=1" : null,
+    apiFetch,
+  );
 
   const activeSites = sites?.filter((site) => site.status === "active").length ?? 0;
   const crawlingSites = sites?.filter((site) => site.status === "crawling").length ?? 0;
+  const approvals = actionQueue?.counts_by_status.needs_approval ?? 0;
 
   async function handleSignOut() {
     await signOut({ redirect: false });
@@ -44,6 +54,9 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <Link href="/actions" className="min-h-10 rounded-full border border-[rgba(32,32,32,0.16)] bg-white px-4 py-2.5 text-sm font-semibold hover:border-[#202020]">
+              Action queue{approvals > 0 ? ` · ${approvals}` : ""}
+            </Link>
             <WorkspaceSwitcher />
             <button
               onClick={handleSignOut}
@@ -71,14 +84,19 @@ export default function Dashboard() {
               </p>
             </div>
 
-            {canUseApi && session?.workspaceRole !== "member" && (
-              <Link
-                href="/sites/new"
-                className="inline-flex min-h-12 items-center justify-center rounded-full bg-[#ea2804] px-6 text-sm font-semibold text-white transition hover:bg-[#c01f00]"
-              >
-                Add a site
+            <div className="flex flex-wrap gap-3">
+              <Link href="/actions" className="inline-flex min-h-12 items-center justify-center rounded-full bg-[#202020] px-6 text-sm font-semibold text-white transition hover:bg-black">
+                Review actions
               </Link>
-            )}
+              {canUseApi && session?.workspaceRole !== "member" && (
+                <Link
+                  href="/sites/new"
+                  className="inline-flex min-h-12 items-center justify-center rounded-full bg-[#ea2804] px-6 text-sm font-semibold text-white transition hover:bg-[#c01f00]"
+                >
+                  Add a site
+                </Link>
+              )}
+            </div>
           </div>
         </div>
       </section>
@@ -89,7 +107,7 @@ export default function Dashboard() {
         )}
 
         {canUseApi && (
-          <section className="grid gap-4 sm:grid-cols-3">
+          <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-[18px] border border-[rgba(32,32,32,0.12)] bg-white p-5 sm:p-6">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#646464]">Workspace</p>
               <p className="mt-3 truncate text-2xl font-semibold tracking-[-0.04em]">{session?.workspaceName || "Active workspace"}</p>
@@ -100,6 +118,11 @@ export default function Dashboard() {
               <p className="mt-3 text-3xl font-semibold tracking-[-0.04em]">{sites ? activeSites : "—"}</p>
               <p className="mt-1 text-sm text-[#646464]">Ready for operator actions</p>
             </div>
+            <Link href="/actions" className="rounded-[18px] border border-[rgba(32,32,32,0.12)] bg-[#202020] p-5 text-white sm:p-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">Needs approval</p>
+              <p className="mt-3 text-3xl font-semibold tracking-[-0.04em]">{actionQueue ? approvals : "—"}</p>
+              <p className="mt-1 text-sm text-white/65">Open governed queue →</p>
+            </Link>
             <div className="rounded-[18px] border border-[rgba(32,32,32,0.12)] bg-white p-5 sm:p-6">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#646464]">Crawling</p>
               <p className="mt-3 text-3xl font-semibold tracking-[-0.04em]">{sites ? crawlingSites : "—"}</p>

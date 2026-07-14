@@ -27,7 +27,6 @@ class Site(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="pending", server_default="pending")
 
-    # Ownership verification. workspace_id remains nullable only during the Phase 2 migration window.
     verification_status: Mapped[str] = mapped_column(
         String(32), default="unverified", server_default="unverified", nullable=False
     )
@@ -36,17 +35,13 @@ class Site(Base):
     verification_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # Tech detection
     tech_stack: Mapped[str | None] = mapped_column(String(50), nullable=True)
     cms: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
-    # Non-secret legacy metadata retained only for migration compatibility. All credentials
-    # now live in encrypted IntegrationCredential records.
     github_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
     wordpress_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     wordpress_user: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # Site context for content generation
     site_context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -70,7 +65,7 @@ class Site(Base):
     crawl_snapshots = relationship("CrawlSnapshot", back_populates="site", cascade="all, delete-orphan")
     agent_runs = relationship("AgentRun", back_populates="site", cascade="all, delete-orphan")
     issues = relationship("Issue", back_populates="site", cascade="all, delete-orphan")
-    fix_actions = relationship("FixAction", back_populates="site", cascade="all, delete-orphan")
+    fix_actions = relationship("OperatorAction", back_populates="site", cascade="all, delete-orphan")
 
     @property
     def github_token(self) -> None:

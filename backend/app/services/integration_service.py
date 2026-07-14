@@ -48,8 +48,8 @@ class ProviderSpec:
     fields: tuple[ProviderField, ...]
 
 
-# This catalog contains only customer-owned connections. Shared AI and SERP
-# providers are configured server-side and must never create workspace records.
+# Manual secret connections only. OAuth and repository mappings are surfaced from
+# their dedicated connection endpoints and must not appear as placeholder providers.
 PROVIDER_SPECS: dict[str, ProviderSpec] = {
     "wordpress": ProviderSpec(
         id="wordpress",
@@ -64,26 +64,6 @@ PROVIDER_SPECS: dict[str, ProviderSpec] = {
             ProviderField("username", "Username", False),
             ProviderField("application_password", "Application password", True),
         ),
-    ),
-    "google_search_console": ProviderSpec(
-        id="google_search_console",
-        name="Google Search Console",
-        description="OAuth connection foundation for property and Search Analytics sync.",
-        connection_mode="oauth",
-        scope="workspace",
-        available=False,
-        test_supported=False,
-        fields=(),
-    ),
-    "google_analytics": ProviderSpec(
-        id="google_analytics",
-        name="Google Analytics 4",
-        description="OAuth connection foundation for GA4 property and measurement sync.",
-        connection_mode="oauth",
-        scope="workspace",
-        available=False,
-        test_supported=False,
-        fields=(),
     ),
 }
 
