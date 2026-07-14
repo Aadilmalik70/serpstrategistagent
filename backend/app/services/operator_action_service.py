@@ -171,7 +171,7 @@ async def create_action(
     db: AsyncSession,
     *,
     workspace_id: uuid.UUID,
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     data: OperatorActionCreate,
 ) -> OperatorAction:
     await _require_site(db, workspace_id, data.site_id)
@@ -288,7 +288,7 @@ async def propose_action(
     db: AsyncSession,
     *,
     workspace_id: uuid.UUID,
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     action_id: uuid.UUID,
     expected_version: int,
 ) -> OperatorAction:
@@ -342,7 +342,7 @@ async def decide_action(
     db: AsyncSession,
     *,
     workspace_id: uuid.UUID,
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     user_role: str,
     action_id: uuid.UUID,
     expected_version: int,
@@ -393,7 +393,7 @@ async def cancel_action(
     db: AsyncSession,
     *,
     workspace_id: uuid.UUID,
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     action_id: uuid.UUID,
     expected_version: int,
 ) -> OperatorAction:
