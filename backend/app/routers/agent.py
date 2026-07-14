@@ -294,7 +294,9 @@ async def get_issues(
 ):
     await _require_site(db, context, site_id)
     query = select(Issue).where(Issue.site_id == site_id)
-    if status != "all":
+    if status in {"active", "open"}:
+        query = query.where(Issue.status.in_(["open", "regressed"]))
+    elif status != "all":
         query = query.where(Issue.status == status)
     if category:
         query = query.where(Issue.category == category)
@@ -314,12 +316,22 @@ async def get_issues(
     return [
         {
             "id": str(issue.id),
+            "finding_type": issue.finding_type,
+            "fingerprint": issue.fingerprint,
+            "detector_version": issue.detector_version,
             "category": issue.category,
             "severity": issue.severity,
             "title": issue.title,
             "description": issue.description,
             "recommendation": issue.recommendation,
             "affected_url": issue.affected_url,
+            "affected_urls": issue.affected_urls or [],
+            "evidence": issue.evidence or [],
+            "impact_score": issue.impact_score,
+            "confidence_score": issue.confidence_score,
+            "effort_score": issue.effort_score,
+            "occurrence_count": issue.occurrence_count,
+            "regression_count": issue.regression_count,
             "status": issue.status,
             "created_at": issue.created_at.isoformat() if issue.created_at else None,
         }
@@ -335,8 +347,8 @@ async def update_issue_status(
     db: AsyncSession = Depends(get_db),
 ):
     require_workspace_role(context, "owner", "admin")
-    if status not in ("open", "dismissed", "fixed"):
-        raise HTTPException(status_code=422, detail="Status must be open, dismissed, or fixed")
+    if status not in ("open", "dismissed"):
+        raise HTTPException(status_code=422, detail="Status must be open or dismissed")
 
     issue = (
         await db.execute(

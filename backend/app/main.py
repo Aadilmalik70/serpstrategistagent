@@ -24,6 +24,7 @@ from app.routers import (
     public_audits,
     site_claims,
     sites,
+    technical_findings,
     workspaces,
 )
 from app.services.entitlement_service import QuotaExceededError
@@ -48,20 +49,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SERP Strategists Operator API",
-    version="0.10.0",
+    version="0.11.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
 )
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 
 @app.exception_handler(QuotaExceededError)
 async def quota_exceeded_handler(request: Request, exc: QuotaExceededError):
@@ -104,6 +96,15 @@ async def enforce_governed_execution(request: Request, call_next):
     return await call_next(request)
 
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 app.include_router(public_audits.router)
 app.include_router(auth.router)
 app.include_router(workspaces.router)
@@ -118,6 +119,7 @@ app.include_router(sites.router)
 app.include_router(crawl.router)
 app.include_router(agent.router)
 app.include_router(operator_actions.router)
+app.include_router(technical_findings.router)
 app.include_router(execution_jobs.action_router)
 app.include_router(execution_jobs.job_router)
 app.include_router(actions.router)

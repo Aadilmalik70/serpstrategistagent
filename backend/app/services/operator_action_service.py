@@ -171,7 +171,7 @@ async def create_action(
     db: AsyncSession,
     *,
     workspace_id: uuid.UUID,
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     data: OperatorActionCreate,
 ) -> OperatorAction:
     await _require_site(db, workspace_id, data.site_id)
@@ -220,6 +220,7 @@ async def create_action(
         from_status=None,
         to_status="draft",
         actor_user_id=user_id,
+        actor_type="system" if user_id is None else "user",
         payload={"source": action.source, "action_type": action.action_type},
     )
     await db.commit()
@@ -288,7 +289,7 @@ async def propose_action(
     db: AsyncSession,
     *,
     workspace_id: uuid.UUID,
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     action_id: uuid.UUID,
     expected_version: int,
 ) -> OperatorAction:
@@ -330,7 +331,7 @@ async def propose_action(
         from_status=old_status,
         to_status=action.status,
         actor_user_id=user_id,
-        actor_type="system" if decision.mode in {"blocked", "auto_approve"} else "user",
+        actor_type="system" if user_id is None or decision.mode in {"blocked", "auto_approve"} else "user",
         payload={"policy": decision.as_dict()},
     )
     await db.commit()
@@ -342,7 +343,7 @@ async def decide_action(
     db: AsyncSession,
     *,
     workspace_id: uuid.UUID,
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     user_role: str,
     action_id: uuid.UUID,
     expected_version: int,
@@ -393,7 +394,7 @@ async def cancel_action(
     db: AsyncSession,
     *,
     workspace_id: uuid.UUID,
-    user_id: uuid.UUID,
+    user_id: uuid.UUID | None,
     action_id: uuid.UUID,
     expected_version: int,
 ) -> OperatorAction:
@@ -412,6 +413,7 @@ async def cancel_action(
         from_status=old_status,
         to_status="cancelled",
         actor_user_id=user_id,
+        actor_type="system" if user_id is None else "user",
     )
     await db.commit()
     await db.refresh(action)
