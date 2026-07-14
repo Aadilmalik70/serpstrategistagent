@@ -62,6 +62,7 @@ export default function SiteDetailPage({
     | "integrations"
   >("agent");
   const [issueKey, setIssueKey] = useState(0);
+  const [pageKey, setPageKey] = useState(0);
 
   if (!canUseApi) {
     return (
@@ -90,7 +91,13 @@ export default function SiteDetailPage({
   function handleAgentComplete() {
     setIssueKey((key) => key + 1);
     setActiveTab("issues");
-    mutate();
+    void mutate();
+  }
+
+  function handleCrawlComplete() {
+    setPageKey((key) => key + 1);
+    setActiveTab("pages");
+    void mutate();
   }
 
   const tabs = [
@@ -107,7 +114,11 @@ export default function SiteDetailPage({
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <SiteHeader site={site} onAgentComplete={handleAgentComplete} />
+      <SiteHeader
+        site={site}
+        onAgentComplete={handleAgentComplete}
+        onCrawlComplete={handleCrawlComplete}
+      />
       <main className="max-w-7xl mx-auto px-6 py-8">
         <StatCards site={site} />
         <div className="mt-8">
@@ -129,7 +140,7 @@ export default function SiteDetailPage({
             </nav>
           </div>
           {activeTab === "agent" && <AgentChatPanel siteId={id} />}
-          {activeTab === "pages" && <PagesTable siteId={id} />}
+          {activeTab === "pages" && <PagesTable key={pageKey} siteId={id} />}
           {activeTab === "issues" && <IssuesPanel key={issueKey} siteId={id} site={site} />}
           {activeTab === "fixes" && <FixActionsPanel siteId={id} />}
           {activeTab === "eeat" && <EEATPanel siteId={id} />}

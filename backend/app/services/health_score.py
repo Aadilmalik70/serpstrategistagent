@@ -3,9 +3,9 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.issue import Issue
+from app.models.page import Page
 
 
-# Points deducted per issue severity
 SEVERITY_WEIGHTS = {
     "critical": 15,
     "high": 8,
@@ -15,10 +15,20 @@ SEVERITY_WEIGHTS = {
 
 
 async def calculate_health_score(db: AsyncSession, site_id) -> dict:
-    """Calculate SEO health score (0-100) for a site based on open issues.
+    """Calculate SEO health only after at least one page has been crawled."""
+    page_count = await db.scalar(select(func.count(Page.id)).where(Page.site_id == site_id))
+    if int(page_count or 0) == 0:
+        return {
+            "score": None,
+            "grade": None,
+            "breakdown": {
+                severity: {"count": 0, "deduction": 0}
+                for severity in SEVERITY_WEIGHTS
+            },
+            "total_issues": 0,
+            "reason": "Run a successful crawl before calculating site health.",
+        }
 
-    Returns dict with score, grade, and breakdown.
-    """
     result = await db.execute(
         select(Issue.severity, func.count(Issue.id))
         .where(Issue.site_id == site_id, Issue.status == "open")
@@ -35,8 +45,6 @@ async def calculate_health_score(db: AsyncSession, site_id) -> dict:
         breakdown[severity] = {"count": count, "deduction": deduction}
 
     score = max(0, 100 - total_deductions)
-
-    # Grade based on score
     if score >= 90:
         grade = "A"
     elif score >= 75:
