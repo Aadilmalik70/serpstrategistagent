@@ -70,7 +70,7 @@ async def get_site_endpoint(
     site = await _require_site(db, context, site_id)
     page_count = await get_site_page_count(db, site_id)
     issue_count_result = await db.execute(
-        select(func.count(Issue.id)).where(Issue.site_id == site_id, Issue.status == "open")
+        select(func.count(Issue.id)).where(Issue.site_id == site_id, Issue.status.in_(["open", "regressed"]))
     )
     issue_count = issue_count_result.scalar() or 0
 

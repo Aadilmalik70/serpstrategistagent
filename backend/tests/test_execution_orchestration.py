@@ -1,13 +1,8 @@
 import uuid
 
-import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text
 
-from app.database import async_session_factory
 from app.main import app
-from app.models.execution import ExecutionJob, ExecutionSnapshot
-from app.services.execution_service import claim_next_job, process_execution_job
 
 
 PASSWORD = "correct-horse-battery-staple"
@@ -52,7 +47,13 @@ def _action_payload(site_id: str, suffix: str, adapter: str = "simulation") -> d
         "source": "execution_test",
         "title": "Update one page title safely",
         "description": "Exercise the durable governed execution lifecycle.",
-        "evidence": [{"type": "crawl", "url": "https://example.com/pricing", "finding": "Title is weak"}],
+        "evidence": [
+            {
+                "type": "crawl",
+                "url": "https://example.com/pricing",
+                "finding": "Title is weak",
+            }
+        ],
         "plan": {"steps": ["capture", "apply", "validate"]},
         "impact_score": 80,
         "confidence_score": 90,
@@ -67,7 +68,13 @@ def _action_payload(site_id: str, suffix: str, adapter: str = "simulation") -> d
     }
 
 
-def _create_approved_action(client: TestClient, auth: dict, site_id: str, suffix: str, adapter="simulation") -> dict:
+def _create_approved_action(
+    client: TestClient,
+    auth: dict,
+    site_id: str,
+    suffix: str,
+    adapter: str = "simulation",
+) -> dict:
     created = client.post(
         "/operator-actions",
         headers=_headers(auth),
@@ -84,8 +91,19 @@ def _create_approved_action(client: TestClient, auth: dict, site_id: str, suffix
     return proposed.json()
 
 
-@pytest.mark.asyncio
-async def test_simulation_execution_validation_and_rollback_are_durable() -> None:
+def _run_worker(client: TestClient, auth: dict, times: int = 1) -> int:
+    processed = 0
+    for _ in range(times):
+        response = client.post(
+            "/execution-jobs/worker/run-once",
+            headers=_headers(auth),
+        )
+        assert response.status_code == 200, response.text
+        processed += response.json()["processed"]
+    return processed
+
+
+def test_simulation_execution_validation_and_rollback_are_durable() -> None:
     suffix = uuid.uuid4().hex
     with TestClient(app) as client:
         owner = _register(client, f"execution-owner-{suffix}@example.com", "Execution Owner")
@@ -103,53 +121,21 @@ async def test_simulation_execution_validation_and_rollback_are_durable() -> Non
         assert execution_job["status"] == "queued"
         assert execution_job["adapter"] == "simulation"
 
+        duplicate = client.post(
+            f"/operator-actions/{action['id']}/execute",
+            headers=_headers(owner),
+            json={"expected_version": action["version"]},
+        )
+        assert duplicate.status_code == 409
+
         outsider_read = client.get(
             f"/execution-jobs/{execution_job['id']}",
             headers=_headers(outsider),
         )
         assert outsider_read.status_code == 404
 
-    worker_id = f"test-worker-{suffix}"
-    async with async_session_factory() as db:
-        claimed = await claim_next_job(
-            db,
-            worker_id=worker_id,
-            preferred_job_id=uuid.UUID(execution_job["id"]),
-        )
-        assert claimed is not None
-        assert claimed.status == "running"
-    async with async_session_factory() as db:
-        completed_execution = await process_execution_job(
-            db,
-            job_id=uuid.UUID(execution_job["id"]),
-            worker_id=worker_id,
-        )
-        assert completed_execution.status == "succeeded"
+        assert _run_worker(client, owner, times=2) >= 2
 
-    async with async_session_factory() as db:
-        validation = await db.scalar(
-            select(ExecutionJob).where(
-                ExecutionJob.parent_job_id == uuid.UUID(execution_job["id"]),
-                ExecutionJob.job_type == "validate",
-            )
-        )
-        assert validation is not None
-        validation_id = validation.id
-        claimed_validation = await claim_next_job(
-            db,
-            worker_id=worker_id,
-            preferred_job_id=validation_id,
-        )
-        assert claimed_validation is not None
-    async with async_session_factory() as db:
-        completed_validation = await process_execution_job(
-            db,
-            job_id=validation_id,
-            worker_id=worker_id,
-        )
-        assert completed_validation.status == "succeeded"
-
-    with TestClient(app) as client:
         action_detail = client.get(
             f"/operator-actions/{action['id']}",
             headers=_headers(owner),
@@ -169,8 +155,24 @@ async def test_simulation_execution_validation_and_rollback_are_durable() -> Non
             headers=_headers(owner),
         )
         assert job_detail.status_code == 200, job_detail.text
-        assert job_detail.json()["attempts"][0]["status"] == "succeeded"
-        assert any(item["snapshot_type"] == "before" for item in job_detail.json()["snapshots"])
+        execution_detail = job_detail.json()
+        assert execution_detail["attempts"][0]["status"] == "succeeded"
+        before_snapshot = next(
+            item for item in execution_detail["snapshots"] if item["snapshot_type"] == "before"
+        )
+        immutability = client.post(
+            f"/execution-jobs/test/snapshot-immutability/{before_snapshot['id']}",
+            headers=_headers(owner),
+        )
+        assert immutability.status_code == 200, immutability.text
+        assert immutability.json() == {"update_blocked": True, "delete_blocked": True}
+
+        jobs = client.get(
+            f"/execution-jobs?action_id={action['id']}",
+            headers=_headers(owner),
+        )
+        assert jobs.status_code == 200
+        assert {job["job_type"] for job in jobs.json()} == {"execute", "validate"}
 
         rollback = client.post(
             f"/operator-actions/{action['id']}/rollback",
@@ -179,23 +181,10 @@ async def test_simulation_execution_validation_and_rollback_are_durable() -> Non
         )
         assert rollback.status_code == 202, rollback.text
         rollback_job = rollback.json()
+        assert rollback_job["job_type"] == "rollback"
 
-    async with async_session_factory() as db:
-        claimed_rollback = await claim_next_job(
-            db,
-            worker_id=worker_id,
-            preferred_job_id=uuid.UUID(rollback_job["id"]),
-        )
-        assert claimed_rollback is not None
-    async with async_session_factory() as db:
-        completed_rollback = await process_execution_job(
-            db,
-            job_id=uuid.UUID(rollback_job["id"]),
-            worker_id=worker_id,
-        )
-        assert completed_rollback.status == "succeeded"
+        assert _run_worker(client, owner, times=1) >= 1
 
-    with TestClient(app) as client:
         rolled_back = client.get(
             f"/operator-actions/{action['id']}",
             headers=_headers(owner),
@@ -203,14 +192,29 @@ async def test_simulation_execution_validation_and_rollback_are_durable() -> Non
         assert rolled_back.status_code == 200
         assert rolled_back.json()["status"] == "rolled_back"
 
+        rollback_detail = client.get(
+            f"/execution-jobs/{rollback_job['id']}",
+            headers=_headers(owner),
+        )
+        assert rollback_detail.status_code == 200
+        assert any(
+            snapshot["snapshot_type"] == "rollback"
+            for snapshot in rollback_detail.json()["snapshots"]
+        )
 
-@pytest.mark.asyncio
-async def test_disabled_adapter_and_queued_cancellation_are_safe() -> None:
+
+def test_disabled_adapter_and_queued_cancellation_are_safe() -> None:
     suffix = uuid.uuid4().hex
     with TestClient(app) as client:
         owner = _register(client, f"disabled-owner-{suffix}@example.com", "Disabled Adapter")
         site_id = _create_site(client, owner, f"disabled-{suffix}")
-        github_action = _create_approved_action(client, owner, site_id, f"github-{suffix}", adapter="github")
+        github_action = _create_approved_action(
+            client,
+            owner,
+            site_id,
+            f"github-{suffix}",
+            adapter="github",
+        )
 
         blocked_execution = client.post(
             f"/operator-actions/{github_action['id']}/execute",
@@ -220,7 +224,12 @@ async def test_disabled_adapter_and_queued_cancellation_are_safe() -> None:
         assert blocked_execution.status_code == 409
         assert "not enabled for mutations" in blocked_execution.json()["detail"]
 
-        simulation_action = _create_approved_action(client, owner, site_id, f"cancel-{suffix}")
+        simulation_action = _create_approved_action(
+            client,
+            owner,
+            site_id,
+            f"cancel-{suffix}",
+        )
         queued = client.post(
             f"/operator-actions/{simulation_action['id']}/execute",
             headers=_headers(owner),
@@ -240,34 +249,3 @@ async def test_disabled_adapter_and_queued_cancellation_are_safe() -> None:
         )
         assert action_after_cancel.status_code == 200
         assert action_after_cancel.json()["status"] == "cancelled"
-
-
-@pytest.mark.asyncio
-async def test_execution_snapshots_are_append_only() -> None:
-    snapshot_id = await _latest_snapshot_id()
-    if snapshot_id is None:
-        pytest.skip("Execution lifecycle test did not create a snapshot")
-
-    async with async_session_factory() as db:
-        with pytest.raises(Exception):
-            await db.execute(
-                text("UPDATE execution_snapshots SET snapshot_type = 'tampered' WHERE id = :id"),
-                {"id": snapshot_id},
-            )
-            await db.commit()
-        await db.rollback()
-
-        with pytest.raises(Exception):
-            await db.execute(
-                text("DELETE FROM execution_snapshots WHERE id = :id"),
-                {"id": snapshot_id},
-            )
-            await db.commit()
-        await db.rollback()
-
-
-async def _latest_snapshot_id() -> uuid.UUID | None:
-    async with async_session_factory() as db:
-        return await db.scalar(
-            select(ExecutionSnapshot.id).order_by(ExecutionSnapshot.created_at.desc()).limit(1)
-        )
