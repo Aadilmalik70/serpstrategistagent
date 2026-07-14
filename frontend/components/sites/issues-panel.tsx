@@ -1,316 +1,266 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useMemo, useState } from "react";
 import useSWR from "swr";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { apiFetch } from "@/lib/api";
 
-async function fetcher(url: string) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Failed to fetch");
-  return res.json();
-}
 
-interface Issue {
+type Finding = {
   id: string;
+  finding_type: string;
+  detector_version: string;
   category: string;
   severity: string;
+  status: string;
   title: string;
   description: string;
   recommendation: string | null;
   affected_url: string | null;
-  status: string;
-  created_at: string;
-}
+  affected_urls: string[];
+  evidence: Record<string, unknown>[];
+  impact_score: number;
+  confidence_score: number;
+  effort_score: number;
+  occurrence_count: number;
+  regression_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  action_id: string | null;
+  action_status: string | null;
+};
+
+type FindingQueue = {
+  items: Finding[];
+  total: number;
+  counts_by_status: Record<string, number>;
+  counts_by_severity: Record<string, number>;
+};
+
+type RefreshResult = {
+  created: number;
+  updated: number;
+  regressed: number;
+  resolved: number;
+  active: number;
+  actions_created: number;
+};
 
 interface SiteInfo {
   domain?: string;
-  github_repo?: string;
-  tech_stack?: string;
 }
 
-const severityColors: Record<string, string> = {
-  critical: "bg-red-100 text-red-800",
-  high: "bg-orange-100 text-orange-800",
-  medium: "bg-yellow-100 text-yellow-800",
-  low: "bg-blue-100 text-blue-800",
+const severityStyles: Record<string, string> = {
+  critical: "border-red-200 bg-red-50 text-red-800",
+  high: "border-orange-200 bg-orange-50 text-orange-800",
+  medium: "border-amber-200 bg-amber-50 text-amber-800",
+  low: "border-blue-200 bg-blue-50 text-blue-800",
 };
 
-const categoryIcons: Record<string, string> = {
-  seo: "🔍",
-  technical: "🔧",
-  content: "📝",
-  accessibility: "♿",
-  structure: "🏗️",
-  performance: "⚡",
-  opportunity: "💡",
+const statusStyles: Record<string, string> = {
+  open: "bg-slate-100 text-slate-700",
+  regressed: "bg-fuchsia-100 text-fuchsia-800",
+  resolved: "bg-emerald-100 text-emerald-800",
+  dismissed: "bg-gray-100 text-gray-500",
 };
-
-type SeverityFilter = "all" | "high" | "medium" | "low";
-type CategoryFilter = "all" | string;
 
 export default function IssuesPanel({ siteId, site }: { siteId: string; site?: SiteInfo }) {
-  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
-  const [copied, setCopied] = useState(false);
-  const { data: issues, error, mutate } = useSWR<Issue[]>(
-    `${API_URL}/agent/issues/${siteId}?status=all`,
-    fetcher
-  );
+  const [status, setStatus] = useState("active");
+  const [severity, setSeverity] = useState("all");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshResult, setRefreshResult] = useState<RefreshResult | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const query = `/technical-findings/sites/${siteId}?status=${status}&limit=500`;
+  const { data, error, mutate } = useSWR<FindingQueue>(query, (path: string) => apiFetch<FindingQueue>(path));
 
-  if (error) return null;
-  if (!issues) {
-    return (
-      <div className="animate-pulse space-y-3">
-        {[1, 2, 3].map((i) => (
-          <div key={i} className="h-20 bg-gray-200 rounded" />
-        ))}
-      </div>
-    );
+  const findings = useMemo(() => {
+    const items = data?.items ?? [];
+    return severity === "all" ? items : items.filter((item) => item.severity === severity);
+  }, [data, severity]);
+
+  async function refreshFindings() {
+    setRefreshing(true);
+    setErrorMessage(null);
+    try {
+      const result = await apiFetch<RefreshResult>(`/technical-findings/sites/${siteId}/refresh`, {
+        method: "POST",
+      });
+      setRefreshResult(result);
+      await mutate();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Technical analysis failed.");
+    } finally {
+      setRefreshing(false);
+    }
   }
 
-  if (issues.length === 0) {
-    return (
-      <div className="text-center py-12 text-gray-500">
-        <p className="text-lg font-medium">No issues found</p>
-        <p className="text-sm mt-1">
-          Click &quot;Run Agent&quot; to analyze your site for SEO issues.
-        </p>
-      </div>
-    );
-  }
-
-  async function dismissIssue(issueId: string) {
-    await fetch(`${API_URL}/agent/issues/${issueId}?status=dismissed`, {
+  async function updateStatus(findingId: string, nextStatus: "open" | "dismissed") {
+    await apiFetch(`/technical-findings/${findingId}`, {
       method: "PATCH",
+      body: JSON.stringify({ status: nextStatus }),
     });
-    mutate();
+    await mutate();
   }
 
-  function generatePrompt(issuesToInclude: Issue[]): string {
-    const codeFixable = issuesToInclude.filter(
-      (i) => i.category !== "opportunity" && i.status === "open"
-    );
-    if (codeFixable.length === 0) return "";
-
-    const domain = site?.domain || "the website";
-    const repo = site?.github_repo || "";
-    const techStack = site?.tech_stack || "";
-
-    let prompt = `Fix the following SEO issues on ${domain}.\n`;
-    if (repo) prompt += `Repository: ${repo}\n`;
-    if (techStack) prompt += `Tech stack: ${techStack}\n`;
-    prompt += `\nThere are ${codeFixable.length} issues to fix. For each one, make the necessary code changes.\n`;
-    prompt += `Make sure the build passes after your changes.\n\n`;
-    prompt += `---\n\n`;
-
-    codeFixable.forEach((issue, idx) => {
-      prompt += `## Issue ${idx + 1}: ${issue.title}\n`;
-      prompt += `- Severity: ${issue.severity}\n`;
-      prompt += `- Category: ${issue.category}\n`;
-      if (issue.affected_url) prompt += `- Affected URL: ${issue.affected_url}\n`;
-      prompt += `- Problem: ${issue.description}\n`;
-      if (issue.recommendation) prompt += `- Fix: ${issue.recommendation}\n`;
-      prompt += `\n`;
-    });
-
-    return prompt;
+  async function ensureAction(findingId: string) {
+    setErrorMessage(null);
+    try {
+      await apiFetch(`/technical-findings/${findingId}/action`, { method: "POST" });
+      await mutate();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Action creation failed.");
+    }
   }
 
-  async function copyPrompt() {
-    const prompt = generatePrompt(filteredIssues);
-    if (!prompt) return;
-    await navigator.clipboard.writeText(prompt);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  if (error) {
+    return <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">Unable to load technical findings.</p>;
   }
-
-  const openIssues = issues.filter((i) => i.status === "open");
-  const dismissedIssues = issues.filter((i) => i.status !== "open");
-
-  // Severity counts
-  const highCount = openIssues.filter((i) => i.severity === "high" || i.severity === "critical").length;
-  const mediumCount = openIssues.filter((i) => i.severity === "medium").length;
-  const lowCount = openIssues.filter((i) => i.severity === "low").length;
-
-  // Category counts
-  const categories = [...new Set(openIssues.map((i) => i.category))].sort();
-
-  // Apply filters
-  let filteredIssues = openIssues;
-  if (severityFilter === "high") {
-    filteredIssues = filteredIssues.filter((i) => i.severity === "high" || i.severity === "critical");
-  } else if (severityFilter !== "all") {
-    filteredIssues = filteredIssues.filter((i) => i.severity === severityFilter);
-  }
-  if (categoryFilter !== "all") {
-    filteredIssues = filteredIssues.filter((i) => i.category === categoryFilter);
+  if (!data) {
+    return <div className="h-48 animate-pulse rounded-xl bg-gray-100" />;
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">
-          Issues ({openIssues.length} open)
-        </h3>
-        <div className="flex items-center gap-3">
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-950">Technical Findings</h3>
+          <p className="mt-1 text-sm text-gray-500">
+            Stable, crawl-backed findings for {site?.domain || "this site"}. Repeated scans update the same finding.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/actions?site_id=${siteId}`} className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            Open action queue
+          </Link>
           <button
-            onClick={copyPrompt}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${
-              copied
-                ? "bg-green-100 text-green-800 border-green-300"
-                : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400"
-            }`}
+            type="button"
+            onClick={refreshFindings}
+            disabled={refreshing}
+            className="rounded-md bg-gray-950 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {copied ? "✓ Copied!" : "📋 Copy Prompt for Coding Agent"}
+            {refreshing ? "Analyzing…" : "Refresh findings"}
           </button>
-          <div className="flex gap-2 text-xs">
-          <span className="px-2 py-1 rounded bg-red-100 text-red-800">
-            {issues.filter((i) => i.severity === "critical" && i.status === "open").length} critical
-          </span>
-          <span className="px-2 py-1 rounded bg-orange-100 text-orange-800">
-            {issues.filter((i) => i.severity === "high" && i.status === "open").length} high
-          </span>
-          <span className="px-2 py-1 rounded bg-yellow-100 text-yellow-800">
-            {issues.filter((i) => i.severity === "medium" && i.status === "open").length} medium
-          </span>
-          </div>
         </div>
       </div>
 
-      {/* Severity filter buttons */}
-      <div className="flex flex-wrap gap-2">
-        <button
-          onClick={() => setSeverityFilter("all")}
-          className={`px-3 py-1.5 text-xs font-medium rounded-full border ${
-            severityFilter === "all"
-              ? "bg-gray-900 text-white border-gray-900"
-              : "bg-white text-gray-600 border-gray-300 hover:border-gray-400"
-          }`}
-        >
-          All Issues ({openIssues.length})
-        </button>
-        <button
-          onClick={() => setSeverityFilter("high")}
-          className={`px-3 py-1.5 text-xs font-medium rounded-full border ${
-            severityFilter === "high"
-              ? "bg-red-600 text-white border-red-600"
-              : "bg-white text-red-700 border-red-300 hover:border-red-400"
-          }`}
-        >
-          🔴 Errors ({highCount})
-        </button>
-        <button
-          onClick={() => setSeverityFilter("medium")}
-          className={`px-3 py-1.5 text-xs font-medium rounded-full border ${
-            severityFilter === "medium"
-              ? "bg-yellow-500 text-white border-yellow-500"
-              : "bg-white text-yellow-700 border-yellow-300 hover:border-yellow-400"
-          }`}
-        >
-          🟡 Warnings ({mediumCount})
-        </button>
-        <button
-          onClick={() => setSeverityFilter("low")}
-          className={`px-3 py-1.5 text-xs font-medium rounded-full border ${
-            severityFilter === "low"
-              ? "bg-blue-600 text-white border-blue-600"
-              : "bg-white text-blue-700 border-blue-300 hover:border-blue-400"
-          }`}
-        >
-          🔵 Info ({lowCount})
-        </button>
+      {refreshResult && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          {refreshResult.active} active · {refreshResult.created} new · {refreshResult.resolved} resolved · {refreshResult.regressed} regressed · {refreshResult.actions_created} actions created
+        </div>
+      )}
+      {errorMessage && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{errorMessage}</div>}
 
-        <span className="border-l border-gray-300 mx-1" />
-
-        {/* Category filter */}
-        <button
-          onClick={() => setCategoryFilter("all")}
-          className={`px-3 py-1.5 text-xs font-medium rounded-full border ${
-            categoryFilter === "all"
-              ? "bg-gray-900 text-white border-gray-900"
-              : "bg-white text-gray-600 border-gray-300 hover:border-gray-400"
-          }`}
-        >
-          All Categories
-        </button>
-        {categories.map((cat) => (
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {(["critical", "high", "medium", "low"] as const).map((level) => (
           <button
-            key={cat}
-            onClick={() => setCategoryFilter(cat)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-full border ${
-              categoryFilter === cat
-                ? "bg-gray-700 text-white border-gray-700"
-                : "bg-white text-gray-600 border-gray-300 hover:border-gray-400"
-            }`}
+            type="button"
+            key={level}
+            onClick={() => setSeverity(severity === level ? "all" : level)}
+            className={`rounded-lg border p-3 text-left ${severityStyles[level]} ${severity === level ? "ring-2 ring-gray-900 ring-offset-1" : ""}`}
           >
-            {categoryIcons[cat] || "📋"} {cat}
+            <span className="block text-xs font-semibold uppercase">{level}</span>
+            <span className="mt-1 block text-2xl font-semibold">{data.counts_by_severity[level] ?? 0}</span>
           </button>
         ))}
       </div>
 
-      {/* Filtered count */}
-      {(severityFilter !== "all" || categoryFilter !== "all") && (
-        <p className="text-sm text-gray-500">
-          Showing {filteredIssues.length} of {openIssues.length} issues
-        </p>
-      )}
+      <div className="flex flex-wrap gap-2">
+        {[
+          ["active", "Active"],
+          ["regressed", "Regressed"],
+          ["resolved", "Resolved"],
+          ["dismissed", "Dismissed"],
+          ["all", "All"],
+        ].map(([value, label]) => (
+          <button
+            type="button"
+            key={value}
+            onClick={() => setStatus(value)}
+            className={`rounded-full px-3 py-1.5 text-xs font-medium ${status === value ? "bg-gray-950 text-white" : "border border-gray-300 bg-white text-gray-600"}`}
+          >
+            {label}{value !== "active" && value !== "all" ? ` (${data.counts_by_status[value] ?? 0})` : ""}
+          </button>
+        ))}
+      </div>
 
-      {filteredIssues.map((issue) => (
-        <div
-          key={issue.id}
-          className="border border-gray-200 rounded-lg p-4 bg-white"
-        >
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-2">
-              <span>{categoryIcons[issue.category] || "📋"}</span>
-              <span
-                className={`text-xs px-2 py-0.5 rounded font-medium ${
-                  severityColors[issue.severity] || "bg-gray-100 text-gray-800"
-                }`}
-              >
-                {issue.severity}
-              </span>
-              <h4 className="font-medium text-sm">{issue.title}</h4>
-            </div>
-            <button
-              onClick={() => dismissIssue(issue.id)}
-              className="text-xs text-gray-400 hover:text-gray-600"
-            >
-              Dismiss
-            </button>
-          </div>
-          {issue.affected_url && (
-            <p className="text-xs text-gray-400 mt-1 font-mono">
-              {issue.affected_url}
-            </p>
-          )}
-          <p className="text-sm text-gray-600 mt-2">{issue.description}</p>
-          {issue.recommendation && (
-            <p className="text-sm text-green-700 mt-2 bg-green-50 p-2 rounded">
-              💡 {issue.recommendation}
-            </p>
-          )}
+      {findings.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-gray-300 py-14 text-center">
+          <p className="font-medium text-gray-800">No findings in this view</p>
+          <p className="mt-1 text-sm text-gray-500">Run a successful crawl, then refresh the deterministic analysis.</p>
         </div>
-      ))}
-
-      {dismissedIssues.length > 0 && (
-        <details className="text-sm text-gray-500">
-          <summary className="cursor-pointer hover:text-gray-700">
-            {dismissedIssues.length} dismissed issues
-          </summary>
-          <div className="mt-2 space-y-2">
-            {dismissedIssues.map((issue) => (
-              <div
-                key={issue.id}
-                className="border border-gray-100 rounded p-3 bg-gray-50 opacity-60"
-              >
-                <span className="text-xs">{issue.title}</span>
+      ) : (
+        <div className="space-y-3">
+          {findings.map((finding) => (
+            <article key={finding.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${severityStyles[finding.severity] || "border-gray-200 bg-gray-50 text-gray-700"}`}>
+                      {finding.severity}
+                    </span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[finding.status] || statusStyles.open}`}>
+                      {finding.status}
+                    </span>
+                    <span className="font-mono text-xs text-gray-400">{finding.finding_type}</span>
+                  </div>
+                  <h4 className="mt-2 font-semibold text-gray-950">{finding.title}</h4>
+                  <p className="mt-1 text-sm text-gray-600">{finding.description}</p>
+                </div>
+                <div className="grid grid-cols-3 gap-1 text-center text-xs">
+                  <Score label="Impact" value={finding.impact_score} />
+                  <Score label="Confidence" value={finding.confidence_score} />
+                  <Score label="Effort" value={finding.effort_score} />
+                </div>
               </div>
-            ))}
-          </div>
-        </details>
+
+              {finding.affected_urls.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {finding.affected_urls.slice(0, 8).map((url) => (
+                    <span key={url} className="max-w-full truncate rounded bg-gray-100 px-2 py-1 font-mono text-xs text-gray-600">{url}</span>
+                  ))}
+                  {finding.affected_urls.length > 8 && <span className="px-2 py-1 text-xs text-gray-400">+{finding.affected_urls.length - 8} more</span>}
+                </div>
+              )}
+
+              {finding.recommendation && (
+                <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{finding.recommendation}</p>
+              )}
+
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3">
+                <p className="text-xs text-gray-400">
+                  Seen {finding.occurrence_count}× · regressions {finding.regression_count} · detector {finding.detector_version}
+                </p>
+                <div className="flex gap-2">
+                  {finding.action_id ? (
+                    <Link href={`/actions/${finding.action_id}`} className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                      View action · {finding.action_status}
+                    </Link>
+                  ) : finding.status === "open" || finding.status === "regressed" ? (
+                    <button type="button" onClick={() => ensureAction(finding.id)} className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
+                      Create action
+                    </button>
+                  ) : null}
+                  {finding.status === "dismissed" ? (
+                    <button type="button" onClick={() => updateStatus(finding.id, "open")} className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50">Reopen</button>
+                  ) : finding.status === "open" || finding.status === "regressed" ? (
+                    <button type="button" onClick={() => updateStatus(finding.id, "dismissed")} className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50">Dismiss</button>
+                  ) : null}
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
       )}
+    </div>
+  );
+}
+
+function Score({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md bg-gray-50 px-2 py-1.5">
+      <span className="block font-semibold text-gray-900">{value}</span>
+      <span className="text-[10px] uppercase text-gray-400">{label}</span>
     </div>
   );
 }

@@ -31,7 +31,7 @@ async def calculate_health_score(db: AsyncSession, site_id) -> dict:
 
     result = await db.execute(
         select(Issue.severity, func.count(Issue.id))
-        .where(Issue.site_id == site_id, Issue.status == "open")
+        .where(Issue.site_id == site_id, Issue.status.in_(["open", "regressed"]))
         .group_by(Issue.severity)
     )
     counts = dict(result.all())

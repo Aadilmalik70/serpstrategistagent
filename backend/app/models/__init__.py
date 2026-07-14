@@ -3,7 +3,7 @@ from app.models.page import Page
 from app.models.crawl_snapshot import CrawlSnapshot
 from app.models.job_queue import JobQueue
 from app.models.agent_run import AgentRun
-from app.models.issue import Issue
+from app.models.issue import Issue, TechnicalFinding
 from app.models.operator_action import OperatorAction, OperatorActionEvent
 from app.models.execution import ExecutionAttempt, ExecutionJob, ExecutionSnapshot
 from app.models.fix_action import FixAction
@@ -28,6 +28,7 @@ __all__ = [
     "JobQueue",
     "AgentRun",
     "Issue",
+    "TechnicalFinding",
     "OperatorAction",
     "OperatorActionEvent",
     "ExecutionJob",
