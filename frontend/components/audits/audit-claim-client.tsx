@@ -28,14 +28,14 @@ export default function AuditClaimClient({
   const router = useRouter();
   const started = useRef(false);
   const [attempt, setAttempt] = useState(0);
-  const [error, setError] = useState("");
+  const tokenValid = AUDIT_TOKEN.test(token);
+  const [error, setError] = useState(
+    tokenValid ? "" : "This audit link is invalid or incomplete.",
+  );
 
   useEffect(() => {
     if (started.current) return;
-    if (!AUDIT_TOKEN.test(token)) {
-      setError("This audit link is invalid or incomplete.");
-      return;
-    }
+    if (!tokenValid) return;
 
     started.current = true;
     let active = true;
@@ -63,7 +63,7 @@ export default function AuditClaimClient({
     return () => {
       active = false;
     };
-  }, [attempt, router, token]);
+  }, [attempt, router, token, tokenValid]);
 
   function retry() {
     started.current = false;
