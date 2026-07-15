@@ -14,7 +14,6 @@ from app.services.github_app_service import GitHubAppError, connect_authorized_r
 from app.services.site_service import get_site_by_id
 
 router = APIRouter(prefix="/integrations/github-repository", tags=["github-repository"])
-settings = get_settings()
 
 
 @router.get("/{site_id}", response_model=GitHubRepositoryResponse)
@@ -99,6 +98,7 @@ async def connect_github_repository(
     if not data.repository:
         raise HTTPException(status_code=422, detail="A public repository is required")
 
+    settings = get_settings()
     try:
         async with httpx.AsyncClient(
             timeout=settings.github_app_timeout_seconds,

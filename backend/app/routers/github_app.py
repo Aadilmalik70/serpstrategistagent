@@ -28,7 +28,6 @@ from app.services.github_app_service import (
 
 
 router = APIRouter(prefix="/integrations/github-app", tags=["github-app"])
-settings = get_settings()
 
 
 def _installation_response(item: GitHubAppInstallation) -> GitHubAppInstallationResponse:
@@ -53,6 +52,7 @@ def _error(exc: GitHubAppError) -> HTTPException:
 
 
 def _settings_redirect(**params: str) -> str:
+    settings = get_settings()
     return f"{settings.frontend_url.rstrip('/')}/settings/integrations?{urlencode(params)}"
 
 

@@ -22,9 +22,6 @@ from app.models.github_app import (
 from app.models.site import Site
 
 
-settings = get_settings()
-
-
 class GitHubAppError(ValueError):
     def __init__(
         self,
@@ -41,6 +38,7 @@ class GitHubAppError(ValueError):
 
 
 def github_app_configured() -> bool:
+    settings = get_settings()
     return bool(
         settings.github_app_id
         and settings.github_app_slug
@@ -57,6 +55,7 @@ def _state_hash(value: str) -> str:
 
 
 def _private_key() -> str:
+    settings = get_settings()
     if not github_app_configured():
         raise GitHubAppError(
             "The GitHub App is not configured for this environment",
@@ -77,6 +76,7 @@ def _private_key() -> str:
 
 
 def build_github_app_jwt(*, now: datetime | None = None) -> str:
+    settings = get_settings()
     issued_at = now or _now()
     claims = {
         "iat": int((issued_at - timedelta(seconds=60)).timestamp()),
@@ -85,6 +85,8 @@ def build_github_app_jwt(*, now: datetime | None = None) -> str:
     }
     try:
         return jwt.encode(claims, _private_key(), algorithm="RS256")
+    except GitHubAppError:
+        raise
     except Exception as exc:
         raise GitHubAppError(
             "The GitHub App private key could not sign an application token",
@@ -145,7 +147,7 @@ def _provider_payload(response: httpx.Response, operation: str) -> dict:
     return payload
 
 
-def _provider_request_error(operation: str, exc: httpx.RequestError) -> GitHubAppError:
+def _provider_request_error(operation: str) -> GitHubAppError:
     return GitHubAppError(
         f"GitHub could not complete the {operation}",
         502,
@@ -159,6 +161,7 @@ async def fetch_provider_installation(
     *,
     client: httpx.AsyncClient | None = None,
 ) -> dict:
+    settings = get_settings()
     owns_client = client is None
     provider = client or httpx.AsyncClient(
         timeout=settings.github_app_timeout_seconds,
@@ -171,7 +174,7 @@ async def fetch_provider_installation(
                 headers=_headers(build_github_app_jwt()),
             )
         except httpx.RequestError as exc:
-            raise _provider_request_error("GitHub App installation lookup", exc) from exc
+            raise _provider_request_error("GitHub App installation lookup") from exc
         if response.status_code >= 400:
             raise _provider_error(response, "GitHub App installation")
         payload = _provider_payload(response, "installation")
@@ -193,6 +196,7 @@ async def create_installation_token(
     *,
     client: httpx.AsyncClient | None = None,
 ) -> str:
+    settings = get_settings()
     owns_client = client is None
     provider = client or httpx.AsyncClient(
         timeout=settings.github_app_timeout_seconds,
@@ -205,7 +209,7 @@ async def create_installation_token(
                 headers=_headers(build_github_app_jwt()),
             )
         except httpx.RequestError as exc:
-            raise _provider_request_error("installation access token request", exc) from exc
+            raise _provider_request_error("installation access token request") from exc
         if response.status_code >= 400:
             raise _provider_error(response, "installation access token")
         token = _provider_payload(response, "installation token").get("token")
@@ -227,6 +231,7 @@ async def list_provider_repositories(
     *,
     client: httpx.AsyncClient | None = None,
 ) -> list[dict]:
+    settings = get_settings()
     owns_client = client is None
     provider = client or httpx.AsyncClient(
         timeout=settings.github_app_timeout_seconds,
@@ -243,7 +248,7 @@ async def list_provider_repositories(
                     params={"per_page": 100, "page": page},
                 )
             except httpx.RequestError as exc:
-                raise _provider_request_error("authorized repository list", exc) from exc
+                raise _provider_request_error("authorized repository list") from exc
             if response.status_code >= 400:
                 raise _provider_error(response, "authorized repository list")
             batch = _provider_payload(response, "repository list").get("repositories")
@@ -269,6 +274,7 @@ async def create_install_intent(
     workspace_id: uuid.UUID,
     user_id: uuid.UUID,
 ) -> str:
+    settings = get_settings()
     if not github_app_configured():
         raise GitHubAppError(
             "The GitHub App is not configured for this environment",

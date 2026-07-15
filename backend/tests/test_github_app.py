@@ -103,6 +103,9 @@ class _FailingProviderClient:
 
 
 def test_github_app_jwt_and_ephemeral_installation_token_contract() -> None:
+    # Other provider tests intentionally clear the cached Settings object. The
+    # GitHub App service must always use the current configured instance.
+    get_settings.cache_clear()
     settings = get_settings()
     encoded_key, public_key = _private_key()
     previous = (
