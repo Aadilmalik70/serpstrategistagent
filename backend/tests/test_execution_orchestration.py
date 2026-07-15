@@ -87,8 +87,20 @@ def _create_approved_action(
         json={"expected_version": created.json()["version"]},
     )
     assert proposed.status_code == 200, proposed.text
-    assert proposed.json()["status"] == "approved"
-    return proposed.json()
+    proposed_action = proposed.json()
+    if proposed_action["status"] == "needs_approval":
+        approved = client.post(
+            f"/operator-actions/{created.json()['id']}/decision",
+            headers=_headers(auth),
+            json={
+                "expected_version": proposed_action["version"],
+                "decision": "approve",
+            },
+        )
+        assert approved.status_code == 200, approved.text
+        proposed_action = approved.json()
+    assert proposed_action["status"] == "approved"
+    return proposed_action
 
 
 def _run_worker(client: TestClient, auth: dict, times: int = 1) -> int:
