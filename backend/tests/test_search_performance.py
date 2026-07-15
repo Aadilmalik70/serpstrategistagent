@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy import func, select
 
-from app.database import async_session_factory
+from app.database import async_session_factory, engine
 from app.main import app
 from app.models.google_data_connection import GoogleDataConnection
 from app.models.search_performance import SearchAnalyticsMetric
@@ -26,6 +26,12 @@ from app.services.search_performance_service import (
 
 
 PASSWORD = "correct-horse-battery-staple"
+
+
+async def _reset_database_pool_for_test_loop() -> None:
+    # TestClient owns a fresh event loop. Drop idle connections created by
+    # earlier TestClient loops without trying to close them from this loop.
+    await engine.dispose(close=False)
 
 
 def test_search_scope_and_page_keys_are_conservative() -> None:
@@ -175,6 +181,8 @@ def test_outcome_classifier_enforces_data_floor_and_direction() -> None:
 def test_durable_search_sync_persists_rows_and_opportunities(monkeypatch) -> None:
     suffix = uuid.uuid4().hex
     with TestClient(app) as client:
+        assert client.portal is not None
+        client.portal.call(_reset_database_pool_for_test_loop)
         registration = client.post(
             "/auth/register",
             json={
@@ -210,7 +218,6 @@ def test_durable_search_sync_persists_rows_and_opportunities(monkeypatch) -> Non
                 )
                 await db.commit()
 
-        assert client.portal is not None
         client.portal.call(configure)
 
         async def fake_rows(client, *, token, property_id, metric_date):
@@ -307,6 +314,8 @@ def test_total_cap_fails_once_rolls_back_and_enforces_cooldown(monkeypatch) -> N
     suffix = uuid.uuid4().hex
     monkeypatch.setattr(service.settings, "search_sync_max_total_rows", 1)
     with TestClient(app) as client:
+        assert client.portal is not None
+        client.portal.call(_reset_database_pool_for_test_loop)
         registration = client.post(
             "/auth/register",
             json={
@@ -372,7 +381,6 @@ def test_total_cap_fails_once_rolls_back_and_enforces_cooldown(monkeypatch) -> N
                     or 0
                 )
 
-        assert client.portal is not None
         client.portal.call(configure)
         monkeypatch.setattr(service, "_fetch_search_rows", fake_rows)
         monkeypatch.setattr(service, "_access_token", fake_token)
