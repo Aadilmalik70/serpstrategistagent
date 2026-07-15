@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 import uuid
 
@@ -146,3 +146,23 @@ class OperatorActionQueueResponse(BaseModel):
     total: int
     counts_by_status: dict[str, int]
     counts_by_risk: dict[str, int]
+
+
+class ActionMeasurementResponse(BaseModel):
+    id: uuid.UUID
+    action_id: uuid.UUID
+    window_days: int
+    status: str
+    outcome: str
+    target_query: str | None
+    target_url: str | None
+    baseline_start: date
+    baseline_end: date
+    baseline_metrics: dict[str, Any]
+    comparison_start: date | None
+    comparison_end: date | None
+    comparison_metrics: dict[str, Any]
+    delta: dict[str, Any]
+    confidence_score: int
+    mutation_applied: bool
+    measured_at: datetime | None

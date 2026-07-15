@@ -25,6 +25,12 @@ from app.services.execution_adapters import (
     get_execution_adapter,
 )
 from app.services.operator_action_service import get_action
+from app.services.search_performance_service import (
+    create_action_measurement_baselines,
+    mark_action_measurement_mutation_applied,
+    refreeze_action_measurement_baselines,
+    refresh_action_measurements,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -278,6 +284,8 @@ async def enqueue_execution(
     existing = await _existing_job(db, workspace_id=workspace_id, idempotency_key=idempotency_key)
     if existing:
         return existing
+
+    await create_action_measurement_baselines(db, action)
 
     job = ExecutionJob(
         action_id=action.id,
@@ -614,6 +622,7 @@ async def process_execution_job(
             old_status = action.status
             action.status = "executing"
             action.execution_started_at = now
+            await refreeze_action_measurement_baselines(db, action)
             action.version += 1
             _append_event(
                 db,
@@ -625,7 +634,18 @@ async def process_execution_job(
                 payload={"job_id": str(job.id), "attempt": job.attempt_count, "adapter": job.adapter},
             )
             applied = await adapter.apply(action, before=before)
-            job.result = {"execution": applied.result, "external_revision": applied.external_revision}
+            action.executed_at = _now()
+            mutation_applied = bool(adapter.mutation_enabled and applied.mutation_applied)
+            await mark_action_measurement_mutation_applied(
+                db,
+                action,
+                mutation_applied=mutation_applied,
+            )
+            job.result = {
+                "execution": applied.result,
+                "external_revision": applied.external_revision,
+                "mutation_applied": mutation_applied,
+            }
             validation_job = await _create_validation_job(db, execution_job=job, action=action)
             job.status = "succeeded"
             job.completed_at = _now()
@@ -679,7 +699,7 @@ async def process_execution_job(
             job.status = "succeeded"
             job.completed_at = _now()
             action.status = "succeeded"
-            action.executed_at = _now()
+            action.executed_at = action.executed_at or _now()
             action.completed_at = _now()
             action.execution_result = {
                 "execution_job_id": str(parent.id) if parent else None,
@@ -688,6 +708,7 @@ async def process_execution_job(
                 "validation": job.result,
             }
             action.version += 1
+            await refresh_action_measurements(db, action)
             _append_event(
                 db,
                 action,
@@ -754,6 +775,7 @@ async def process_execution_job(
                 actor_user_id=None,
                 payload={"job_id": str(job.id), "snapshot_id": str(before_record.id)},
             )
+            await refresh_action_measurements(db, action)
             attempt.result = job.result
             attempt.status = "succeeded"
             attempt.completed_at = _now()

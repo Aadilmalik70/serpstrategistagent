@@ -42,7 +42,7 @@ This is the **SERP Strategists Agent (SSA)** — an autonomous Search Growth Age
 
 **Tech Stack**: Next.js + FastAPI + LangGraph + PostgreSQL + Redis
 
-**Current Phase**: Planning & PRD refinement → Sprint 1 (Foundation)
+**Current Phase**: Phase 4 execution/crawl hardening + Phase 5 search measurement. Track slice status in GitHub Issue #2.
 
 <!-- agent-ninja-START -->
 ## Agent Skills

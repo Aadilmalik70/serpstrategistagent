@@ -29,6 +29,9 @@ class AdapterSnapshot:
 class AdapterResult:
     result: dict[str, Any]
     external_revision: str | None = None
+    # Outcome measurement must be positively gated on this persisted signal.
+    # Capability alone is insufficient because an adapter may perform a no-op.
+    mutation_applied: bool = False
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,7 @@ class SimulationExecutionAdapter:
                 "before_revision": before.external_revision,
             },
             external_revision=f"simulation:{action.id}:{action.version}:applied",
+            mutation_applied=False,
         )
 
     async def validate(

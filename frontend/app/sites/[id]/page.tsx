@@ -11,6 +11,7 @@ import IssuesPanel from "@/components/sites/issues-panel";
 import LinksPanel from "@/components/sites/links-panel";
 import PagesTable from "@/components/sites/pages-table";
 import SiteHeader from "@/components/sites/site-header";
+import SearchPerformancePanel from "@/components/sites/search-performance-panel";
 import StatCards from "@/components/sites/stat-cards";
 import StatusCodesPanel from "@/components/sites/status-codes-panel";
 import VisualizationPanel from "@/components/sites/visualization-panel";
@@ -58,6 +59,7 @@ export default function SiteDetailPage({
     | "status"
     | "visualization"
     | "integrations"
+    | "search"
   >("agent");
   const [issueKey, setIssueKey] = useState(0);
   const [pageKey, setPageKey] = useState(0);
@@ -102,6 +104,7 @@ export default function SiteDetailPage({
     { key: "agent", label: "💬 Agent" },
     { key: "pages", label: "Pages" },
     { key: "issues", label: "Technical Findings" },
+    { key: "search", label: "Search Opportunities" },
     { key: "eeat", label: "🎓 E-E-A-T" },
     { key: "links", label: "🔗 Links" },
     { key: "status", label: "Status Codes" },
@@ -139,6 +142,7 @@ export default function SiteDetailPage({
           {activeTab === "agent" && <AgentChatPanel siteId={id} />}
           {activeTab === "pages" && <PagesTable key={pageKey} siteId={id} />}
           {activeTab === "issues" && <IssuesPanel key={issueKey} siteId={id} site={site} />}
+          {activeTab === "search" && <SearchPerformancePanel siteId={id} />}
           {activeTab === "eeat" && <EEATPanel siteId={id} />}
           {activeTab === "links" && <LinksPanel siteId={id} />}
           {activeTab === "status" && <StatusCodesPanel siteId={id} />}

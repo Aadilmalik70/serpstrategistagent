@@ -27,6 +27,12 @@ from app.config import get_settings
 from app.models.crawl_snapshot import CrawlSnapshot
 from app.models.job_queue import CrawlFrontier, JobQueue
 from app.models.page import Page
+from app.services.rendered_crawler import (
+    AdaptivePacer,
+    detect_bot_block,
+    needs_javascript_render,
+    render_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -713,6 +719,12 @@ async def run_first_party_crawl(
     bounded_max_pages = max(1, min(int(max_pages), 100_000))
     frontier_limit = max(bounded_max_pages * 5, bounded_max_pages)
     snapshot = await _crawl_snapshot_for_job(db, site_id=site_id, job_id=job_id)
+    rendered_pages = 0
+    render_attempts = 0
+    device_comparisons = 0
+    device_comparison_attempts = 0
+    bot_blocks: list[dict[str, Any]] = []
+    render_errors: list[dict[str, str]] = []
 
     started = time.perf_counter()
 
@@ -734,7 +746,11 @@ async def run_first_party_crawl(
             timeout=timeout,
             follow_redirects=False,
             headers=headers,
-            limits=httpx.Limits(max_keepalive_connections=0),
+            limits=httpx.Limits(
+                max_connections=max(4, settings.crawler_concurrency * 2),
+                max_keepalive_connections=max(1, settings.crawler_concurrency),
+                keepalive_expiry=10,
+            ),
         ) as client:
             homepage = await _resolve_homepage(client, normalized_domain)
             if control and await control():
@@ -746,6 +762,13 @@ async def run_first_party_crawl(
             base_url = _origin(homepage_url)
 
             robots = await _load_robots(client, base_url, site_host)
+            pacer = AdaptivePacer(
+                base_delay_seconds=max(
+                    settings.crawler_request_delay_ms / 1000,
+                    robots.crawl_delay,
+                ),
+                max_delay_seconds=settings.crawler_adaptive_max_delay_seconds,
+            )
             if control and await control():
                 raise CrawlCancelled("Crawl cancellation requested")
             sitemap_urls, sitemap_summary = await _discover_sitemap_urls(
@@ -775,7 +798,12 @@ async def run_first_party_crawl(
                 frontier_rows = await _next_frontier_batch(
                     db,
                     job_id=job_id,
-                    limit=min(settings.crawler_concurrency, bounded_max_pages - pages_crawled),
+                    limit=min(
+                        1
+                        if robots.crawl_delay > 0
+                        else pacer.concurrency(settings.crawler_concurrency),
+                        bounded_max_pages - pages_crawled,
+                    ),
                 )
                 if not frontier_rows:
                     break
@@ -830,13 +858,171 @@ async def run_first_party_crawl(
                         frontier.last_error = "Final response resolved outside the configured site"
                         frontier.completed_at = datetime.now(timezone.utc)
                         continue
-                    path = _path_key(final_url)
+                    block = detect_bot_block(result.status_code, result.headers, result.body)
+                    pacer.record(status_code=result.status_code, bot_blocked=block.detected)
+                    pacer.respect_retry_after(result.headers.get("retry-after"))
+                    if block.detected:
+                        bot_blocks.append(
+                            {
+                                "url": requested_url,
+                                "status_code": result.status_code,
+                                "provider": block.provider,
+                                "reason": block.reason,
+                            }
+                        )
+                        frontier.last_error = block.reason
+                        if frontier.attempt_count < 3:
+                            frontier.status = "queued"
+                        else:
+                            frontier.status = "blocked"
+                            frontier.completed_at = datetime.now(timezone.utc)
+                        continue
+                    if result.status_code == 429:
+                        frontier.last_error = "HTTP 429: origin rate limit"
+                        if frontier.attempt_count < 3:
+                            frontier.status = "queued"
+                        else:
+                            frontier.status = "failed"
+                            frontier.completed_at = datetime.now(timezone.utc)
+                        continue
                     content_type = result.headers.get("content-type", "").lower()
+                    effective_status_code = result.status_code
+                    effective_response_time_ms = result.response_time_ms
+                    effective_headers = result.headers
                     is_html = "text/html" in content_type or "application/xhtml+xml" in content_type
                     parser = PageHtmlParser()
+                    html_text = result.body.decode("utf-8", errors="replace") if is_html else ""
+                    static_html_text = html_text
                     if is_html and result.body:
-                        parser.feed(result.body.decode("utf-8", errors="replace"))
+                        parser.feed(html_text)
 
+                    render_metadata: dict[str, Any] = {
+                        "used": False,
+                        "triggered": False,
+                        "device": None,
+                    }
+                    mobile_parser: PageHtmlParser | None = None
+                    mobile_status_code: int | None = None
+                    if (
+                        settings.crawler_render_enabled
+                        and render_attempts < settings.crawler_render_max_pages
+                        and result.status_code < 400
+                        and is_html
+                        and needs_javascript_render(html_text, word_count=parser.word_count)
+                    ):
+                        render_metadata["triggered"] = True
+                        render_attempts += 1
+                        try:
+                            rendered = await asyncio.wait_for(
+                                render_url(
+                                    final_url,
+                                    user_agent=settings.crawler_user_agent,
+                                    timeout_seconds=settings.crawler_render_timeout_seconds,
+                                    mobile=False,
+                                    validate_url=_validate_public_target,
+                                    max_html_bytes=settings.crawler_max_response_bytes,
+                                    source_html=static_html_text,
+                                ),
+                                timeout=settings.crawler_render_timeout_seconds + 5,
+                            )
+                            rendered_block = detect_bot_block(
+                                rendered.status_code,
+                                rendered.headers,
+                                rendered.html,
+                            )
+                            pacer.record(
+                                status_code=rendered.status_code,
+                                bot_blocked=rendered_block.detected,
+                            )
+                            if rendered_block.detected:
+                                bot_blocks.append(
+                                    {
+                                        "url": rendered.url,
+                                        "status_code": rendered.status_code,
+                                        "provider": rendered_block.provider,
+                                        "reason": rendered_block.reason,
+                                    }
+                                )
+                            else:
+                                normalized_rendered_url = _normalize_url(
+                                    rendered.url,
+                                    final_url,
+                                    site_host,
+                                )
+                                if not normalized_rendered_url:
+                                    raise CrawlError("Rendered page resolved outside the configured site")
+                                rendered_parser = PageHtmlParser()
+                                rendered_parser.feed(rendered.html)
+                                materially_improved = bool(
+                                    (
+                                        rendered_parser.word_count
+                                        >= max(parser.word_count + 20, int(parser.word_count * 1.25))
+                                        or (not parser.title and bool(rendered_parser.title))
+                                        or (
+                                            not parser.headings("h1")
+                                            and bool(rendered_parser.headings("h1"))
+                                        )
+                                    )
+                                    and rendered_parser.word_count >= parser.word_count
+                                    and (not parser.title or bool(rendered_parser.title))
+                                    and (
+                                        not parser.headings("h1")
+                                        or bool(rendered_parser.headings("h1"))
+                                    )
+                                    and (not parser.canonical or bool(rendered_parser.canonical))
+                                    and (
+                                        not parser.links
+                                        or len(rendered_parser.links) >= max(1, len(parser.links) // 2)
+                                    )
+                                )
+                                if materially_improved:
+                                    final_url = normalized_rendered_url
+                                    html_text = rendered.html
+                                    parser = rendered_parser
+                                    rendered_pages += 1
+                                    render_metadata = {
+                                        "used": True,
+                                        "triggered": True,
+                                        "device": "desktop",
+                                        "status_code": rendered.status_code,
+                                        "response_time_ms": rendered.response_time_ms,
+                                    }
+                                else:
+                                    render_metadata["reason"] = "rendered_dom_not_materially_better"
+                                if (
+                                    materially_improved
+                                    and device_comparison_attempts
+                                    < settings.crawler_device_compare_max_pages
+                                ):
+                                    device_comparison_attempts += 1
+                                    mobile = await asyncio.wait_for(
+                                        render_url(
+                                            final_url,
+                                            user_agent=settings.crawler_user_agent,
+                                            timeout_seconds=settings.crawler_render_timeout_seconds,
+                                            mobile=True,
+                                            validate_url=_validate_public_target,
+                                            max_html_bytes=settings.crawler_max_response_bytes,
+                                            source_html=static_html_text,
+                                        ),
+                                        timeout=settings.crawler_render_timeout_seconds + 5,
+                                    )
+                                    mobile_block = detect_bot_block(
+                                        mobile.status_code,
+                                        mobile.headers,
+                                        mobile.html,
+                                    )
+                                    if not mobile_block.detected:
+                                        mobile_parser = PageHtmlParser()
+                                        mobile_parser.feed(mobile.html)
+                                        mobile_status_code = mobile.status_code
+                                        device_comparisons += 1
+                        except Exception as exc:
+                            message = f"{type(exc).__name__}: {str(exc)[:300]}"
+                            render_metadata["error"] = message
+                            render_errors.append({"url": final_url, "message": message})
+
+                    path = _path_key(final_url)
                     internal_links: list[str] = []
                     external_links = 0
                     discovered_links: list[tuple[str, str | None]] = []
@@ -861,7 +1047,7 @@ async def run_first_party_crawl(
                     robots_directives = ", ".join(
                         value for value in (
                             parser.meta.get("robots", ""),
-                            result.headers.get("x-robots-tag", ""),
+                            effective_headers.get("x-robots-tag", ""),
                         ) if value
                     )
                     metadata = {
@@ -886,8 +1072,44 @@ async def run_first_party_crawl(
                         "og_tags": og_tags,
                         "twitter_tags": twitter_tags,
                         "json_ld_count": parser.json_ld_count,
+                        "rendering": render_metadata,
                     }
-                    content_hash = hashlib.sha256(result.body).hexdigest()
+                    if mobile_parser is not None:
+                        mobile_h1 = mobile_parser.headings("h1")
+                        metadata["device_comparison"] = {
+                            "desktop": {
+                                "status_code": render_metadata.get("status_code"),
+                                "title": parser.title,
+                                "h1": h1_values[0] if h1_values else None,
+                                "word_count": parser.word_count,
+                                "links": len(parser.links),
+                                "canonical": parser.canonical,
+                                "meta_description": parser.meta.get("description"),
+                                "robots": parser.meta.get("robots"),
+                            },
+                            "mobile": {
+                                "status_code": mobile_status_code,
+                                "title": mobile_parser.title,
+                                "h1": mobile_h1[0] if mobile_h1 else None,
+                                "word_count": mobile_parser.word_count,
+                                "links": len(mobile_parser.links),
+                                "canonical": mobile_parser.canonical,
+                                "meta_description": mobile_parser.meta.get("description"),
+                                "robots": mobile_parser.meta.get("robots"),
+                            },
+                            "different": bool(
+                                render_metadata.get("status_code") != mobile_status_code
+                                or parser.title != mobile_parser.title
+                                or (h1_values[0] if h1_values else None)
+                                != (mobile_h1[0] if mobile_h1 else None)
+                                or parser.word_count != mobile_parser.word_count
+                                or len(parser.links) != len(mobile_parser.links)
+                                or parser.canonical != mobile_parser.canonical
+                                or parser.meta.get("description") != mobile_parser.meta.get("description")
+                                or parser.meta.get("robots") != mobile_parser.meta.get("robots")
+                            ),
+                        }
+                    content_hash = hashlib.sha256(html_text.encode("utf-8") if is_html else result.body).hexdigest()
                     await _upsert_page(
                         db,
                         site_id=site_id,
@@ -895,9 +1117,9 @@ async def run_first_party_crawl(
                         title=parser.title,
                         meta_description=parser.meta.get("description"),
                         h1=h1_values[0] if h1_values else None,
-                        status_code=result.status_code,
+                        status_code=effective_status_code,
                         word_count=parser.word_count if is_html else 0,
-                        response_time_ms=result.response_time_ms,
+                        response_time_ms=effective_response_time_ms,
                         canonical_url=canonical,
                         content_hash=content_hash,
                         metadata=metadata,
@@ -924,13 +1146,25 @@ async def run_first_party_crawl(
                     "robots_status": robots.status_code,
                     "sitemap_urls": sitemap_summary.get("sitemaps_checked", []),
                     "frontier": counts,
+                    "rendering": {
+                        "rendered_pages": rendered_pages,
+                        "render_attempts": render_attempts,
+                        "device_comparisons": device_comparisons,
+                        "device_comparison_attempts": device_comparison_attempts,
+                        "errors": len(render_errors),
+                    },
+                    "bot_protection": {
+                        "events": len(bot_blocks),
+                        "adaptive_delay_seconds": pacer.delay_seconds,
+                        "adaptive_concurrency": pacer.concurrency(settings.crawler_concurrency),
+                    },
                 }
                 await db.commit()
 
                 if control and await control():
                     raise CrawlCancelled("Crawl cancellation requested")
 
-                delay = max(settings.crawler_request_delay_ms / 1000, robots.crawl_delay)
+                delay = pacer.delay_seconds
                 if delay:
                     await asyncio.sleep(delay)
 
@@ -977,6 +1211,20 @@ async def run_first_party_crawl(
                 "frontier": counts,
                 "duration_ms": elapsed_ms,
                 "max_pages": bounded_max_pages,
+                "rendering": {
+                    "enabled": settings.crawler_render_enabled,
+                    "rendered_pages": rendered_pages,
+                    "render_attempts": render_attempts,
+                    "device_comparisons": device_comparisons,
+                    "device_comparison_attempts": device_comparison_attempts,
+                    "errors": render_errors[:20],
+                },
+                "bot_protection": {
+                    "events": bot_blocks[:50],
+                    "throttle_events": pacer.throttle_events,
+                    "final_delay_seconds": pacer.delay_seconds,
+                    "final_concurrency": pacer.concurrency(settings.crawler_concurrency),
+                },
                 "errors": [
                     {"url": row.url, "message": row.last_error}
                     for row in list(

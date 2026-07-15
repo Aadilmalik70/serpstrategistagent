@@ -65,6 +65,18 @@ type ExecutionJob = {
   completed_at: string | null;
 };
 
+type ActionMeasurement = {
+  id: string;
+  window_days: number;
+  status: string;
+  outcome: string;
+  baseline_metrics: Record<string, number | string | boolean | null>;
+  comparison_metrics: Record<string, number | string | boolean | null>;
+  delta: Record<string, number>;
+  confidence_score: number;
+  measured_at: string | null;
+};
+
 function panel(label: string, value: unknown) {
   return (
     <section className="rounded-[20px] border border-[rgba(32,32,32,0.12)] bg-white p-5 sm:p-6">
@@ -102,9 +114,13 @@ export default function OperatorActionDetailPage() {
     apiFetch,
     { refreshInterval: 4000 },
   );
+  const { data: measurements, mutate: mutateMeasurements } = useSWR<ActionMeasurement[]>(
+    canUseApi ? `/operator-actions/${params.id}/measurements` : null,
+    apiFetch,
+  );
 
   async function refreshAll() {
-    await Promise.all([mutate(), mutateJobs()]);
+    await Promise.all([mutate(), mutateJobs(), mutateMeasurements()]);
   }
 
   async function transition(kind: "propose" | "approve" | "reject" | "cancel") {
@@ -180,6 +196,25 @@ export default function OperatorActionDetailPage() {
         requestError instanceof OperatorApiError
           ? requestError.message
           : "The execution job could not be cancelled.",
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function refreshMeasurements() {
+    if (!action) return;
+    setBusy("measurements");
+    setMessage("");
+    try {
+      await apiFetch(`/operator-actions/${action.id}/measurements/refresh`, { method: "POST" });
+      await mutateMeasurements();
+      setMessage("Measurement outcomes refreshed.");
+    } catch (requestError) {
+      setMessage(
+        requestError instanceof OperatorApiError
+          ? requestError.message
+          : "Measurement outcomes could not be refreshed.",
       );
     } finally {
       setBusy(null);
@@ -286,6 +321,33 @@ export default function OperatorActionDetailPage() {
                 <Link href={`/execution-jobs/${job.id}`} className="text-sm font-semibold text-[#ea2804]">View job →</Link>
               </div>
             </article>)}
+          </div>
+        </section>
+
+        <section className="mt-5 rounded-[20px] border border-[rgba(32,32,32,0.12)] bg-white p-5 sm:p-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#646464]">Before / after measurement</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-[-0.035em]">7–90 day action outcomes</h2>
+              <p className="mt-2 text-sm text-[#646464]">Search Console baselines are frozen when execution is queued. Completed windows classify impact as positive, neutral, negative, or insufficient data.</p>
+            </div>
+            {canManage && <button type="button" onClick={() => void refreshMeasurements()} disabled={busy === "measurements"} className="min-h-10 rounded-full border border-[rgba(32,32,32,0.16)] px-4 text-sm font-semibold disabled:opacity-50">{busy === "measurements" ? "Refreshing…" : "Refresh outcomes"}</button>}
+          </div>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {measurements?.map((measurement) => (
+              <article key={measurement.id} className="rounded-2xl bg-[#f9f7f3] p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold">{measurement.window_days} days</p>
+                  <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase ${measurement.outcome === "positive" ? "bg-emerald-100 text-emerald-800" : measurement.outcome === "negative" ? "bg-red-100 text-red-800" : "bg-[#ebe7dd] text-[#646464]"}`}>{measurement.outcome.replaceAll("_", " ")}</span>
+                </div>
+                <p className="mt-3 text-xs text-[#646464]">Baseline clicks</p>
+                <p className="text-lg font-semibold">{measurement.baseline_metrics.clicks ?? 0}</p>
+                <p className="mt-2 text-xs text-[#646464]">After clicks</p>
+                <p className="text-lg font-semibold">{measurement.status === "measured" ? measurement.comparison_metrics.clicks ?? 0 : "Waiting"}</p>
+                <p className="mt-2 text-[10px] uppercase tracking-[0.1em] text-[#8d8d8d]">confidence {measurement.confidence_score}</p>
+              </article>
+            ))}
+            {measurements?.length === 0 && <p className="col-span-full text-sm text-[#646464]">{adapter === "simulation" ? "Simulation-only actions do not create outcome measurements or influence learning." : "Measurement baselines will be frozen immediately before execution."}</p>}
           </div>
         </section>
 
