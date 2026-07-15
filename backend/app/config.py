@@ -1,4 +1,5 @@
 from functools import lru_cache
+import re
 from urllib.parse import urlparse
 
 from pydantic import computed_field, field_validator, model_validator
@@ -45,6 +46,13 @@ class Settings(BaseSettings):
     )
     google_analytics_admin_api_url: str = "https://analyticsadmin.googleapis.com/v1beta"
     google_integration_timeout_seconds: float = 20.0
+
+    github_api_url: str = "https://api.github.com"
+    github_app_id: str = ""
+    github_app_slug: str = ""
+    github_app_private_key_base64: str = ""
+    github_app_state_ttl_minutes: int = 10
+    github_app_timeout_seconds: float = 20.0
 
     wordpress_url: str = ""
     wordpress_user: str = ""
@@ -141,6 +149,7 @@ class Settings(BaseSettings):
         "google_search_console_api_url",
         "google_search_console_inspection_api_url",
         "google_analytics_admin_api_url",
+        "github_api_url",
     )
     @classmethod
     def normalize_provider_url(cls, value: str) -> str:
@@ -152,6 +161,14 @@ class Settings(BaseSettings):
             raise ValueError("Provider base URLs cannot contain embedded credentials")
         return normalized
 
+    @field_validator("github_app_slug")
+    @classmethod
+    def normalize_github_app_slug(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized and not re.fullmatch(r"[A-Za-z0-9-]+", normalized):
+            raise ValueError("GITHUB_APP_SLUG may contain only letters, numbers, and hyphens")
+        return normalized
+
     @model_validator(mode="after")
     def validate_secure_environment(self) -> "Settings":
         if self.app_env.lower() in {"staging", "production"}:
@@ -161,11 +178,23 @@ class Settings(BaseSettings):
                 raise ValueError("FRONTEND_URL must be an absolute URL")
         if self.oauth_bridge_secret and len(self.oauth_bridge_secret) < 32:
             raise ValueError("OAUTH_BRIDGE_SECRET must be at least 32 characters when configured")
+        github_app_values = (
+            self.github_app_id,
+            self.github_app_slug,
+            self.github_app_private_key_base64,
+        )
+        if any(github_app_values) and not all(github_app_values):
+            raise ValueError(
+                "GITHUB_APP_ID, GITHUB_APP_SLUG, and GITHUB_APP_PRIVATE_KEY_BASE64 must be configured together"
+            )
+        if self.github_app_state_ttl_minutes <= 0 or self.github_app_state_ttl_minutes > 60:
+            raise ValueError("GITHUB_APP_STATE_TTL_MINUTES must be between 1 and 60")
         if (
             self.ai_gateway_timeout_seconds <= 0
             or self.serpapi_timeout_seconds <= 0
             or self.stripe_timeout_seconds <= 0
             or self.google_integration_timeout_seconds <= 0
+            or self.github_app_timeout_seconds <= 0
             or self.crawler_timeout_seconds <= 0
             or self.crawler_connect_timeout_seconds <= 0
             or self.crawler_render_timeout_seconds <= 0

@@ -28,6 +28,11 @@ from app.models.search_performance import (
     UrlInspectionResult,
 )
 from app.models.free_audit import FreeAuditRequest
+from app.models.github_app import (
+    GitHubAppInstallation,
+    GitHubAppInstallIntent,
+    GitHubRepositoryConnection,
+)
 
 __all__ = [
     "Site",
@@ -65,4 +70,7 @@ __all__ = [
     "UrlInspectionAttempt",
     "UrlInspectionResult",
     "FreeAuditRequest",
+    "GitHubAppInstallation",
+    "GitHubAppInstallIntent",
+    "GitHubRepositoryConnection",
 ]

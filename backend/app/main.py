@@ -16,6 +16,7 @@ from app.routers import (
     chat,
     crawl,
     execution_jobs,
+    github_app,
     github_repository,
     google_data,
     integrations,
@@ -71,7 +72,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SERP Strategists Operator API",
-    version="0.15.0",
+    version="0.16.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
@@ -134,6 +135,7 @@ app.include_router(billing.router)
 app.include_router(onboarding.router)
 app.include_router(google_data.router)
 app.include_router(google_data.callback_router)
+app.include_router(github_app.router)
 app.include_router(github_repository.router)
 app.include_router(integrations.router)
 app.include_router(site_claims.router)

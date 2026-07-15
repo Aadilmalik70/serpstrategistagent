@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 
@@ -32,8 +33,6 @@ export default function IntegrationsPanel({ siteId }: { siteId: string }) {
   const [showForm, setShowForm] = useState(false);
 
   // Form state
-  const [githubRepo, setGithubRepo] = useState("");
-  const [githubToken, setGithubToken] = useState("");
   const [wpUrl, setWpUrl] = useState("");
   const [wpUser, setWpUser] = useState("");
   const [wpPassword, setWpPassword] = useState("");
@@ -62,8 +61,6 @@ export default function IntegrationsPanel({ siteId }: { siteId: string }) {
     setSaving(true);
     try {
       const body: Record<string, string> = {};
-      if (githubRepo) body.github_repo = githubRepo;
-      if (githubToken) body.github_token = githubToken;
       if (wpUrl) body.wordpress_url = wpUrl;
       if (wpUser) body.wordpress_user = wpUser;
       if (wpPassword) body.wordpress_app_password = wpPassword;
@@ -75,7 +72,6 @@ export default function IntegrationsPanel({ siteId }: { siteId: string }) {
       });
       mutate();
       setShowForm(false);
-      setGithubToken("");
       setWpPassword("");
     } finally {
       setSaving(false);
@@ -140,7 +136,7 @@ export default function IntegrationsPanel({ siteId }: { siteId: string }) {
             <div>
               <h4 className="font-medium text-sm">GitHub Integration</h4>
               <p className="text-xs text-gray-500">
-                Auto-create PRs with SEO code fixes
+                GitHub App repository authorization
               </p>
             </div>
           </div>
@@ -151,7 +147,7 @@ export default function IntegrationsPanel({ siteId }: { siteId: string }) {
                 : "bg-gray-100 text-gray-500"
             }`}
           >
-            {integrations.github_connected ? "Connected" : "Not connected"}
+            {integrations.github_connected ? "Mapped" : "Not mapped"}
           </span>
         </div>
         {integrations.github_repo && (
@@ -159,6 +155,12 @@ export default function IntegrationsPanel({ siteId }: { siteId: string }) {
             📂 {integrations.github_repo}
           </p>
         )}
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <p className="text-xs text-gray-500">Private repository authorization is managed in Settings. Execution remains disabled.</p>
+          <Link href="/settings/integrations" className="shrink-0 text-xs font-semibold text-blue-700 hover:underline">
+            Manage GitHub App
+          </Link>
+        </div>
       </div>
 
       {/* WordPress Integration */}
@@ -212,25 +214,6 @@ export default function IntegrationsPanel({ siteId }: { siteId: string }) {
       ) : (
         <div className="border border-blue-200 rounded-lg p-4 bg-blue-50 space-y-4">
           <h4 className="font-medium text-sm text-blue-900">Configure Integrations</h4>
-
-          {/* GitHub Fields */}
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-gray-700">GitHub</p>
-            <input
-              type="text"
-              placeholder="owner/repo (e.g., myuser/mysite)"
-              value={githubRepo}
-              onChange={(e) => setGithubRepo(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-            <input
-              type="password"
-              placeholder="GitHub Personal Access Token"
-              value={githubToken}
-              onChange={(e) => setGithubToken(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
 
           {/* WordPress Fields */}
           <div className="space-y-2">

@@ -73,6 +73,17 @@ reconcile into simulation-only governed draft actions. The provider returns
 Google's indexed view, not a live URL test. PostgreSQL remains authoritative and
 Redis is only a bounded wake-up hint.
 
+GitHub private-repository access uses a GitHub App, never a workspace-supplied
+Personal Access Token. Apply migration `021`, configure the server-only
+`GITHUB_APP_ID`, `GITHUB_APP_SLUG`, and `GITHUB_APP_PRIVATE_KEY_BASE64` values,
+then set the App setup URL to
+`https://<api-host>/integrations/github-app/callback`. The Settings integration
+control center can install the App, enumerate only repositories granted to that
+installation, and map one to a site. Installation access tokens are minted only
+for provider requests and are not stored or returned to the browser. This slice
+authorizes repositories only; branch creation, commits, and pull requests remain
+disabled until the governed GitHub execution slice is deployed.
+
 ### Frontend
 
 ```bash

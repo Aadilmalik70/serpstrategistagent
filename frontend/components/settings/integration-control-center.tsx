@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useSession } from "next-auth/react";
+import { useSearchParams } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 import useSWR from "swr";
 
@@ -55,10 +56,45 @@ type GitHubRepositoryStatus = {
   connected: boolean;
   visibility: string | null;
   default_branch?: string | null;
+  installation_id: string | null;
+  repository_id: number | null;
+  authorization_source: "public" | "github_app";
+  authorization_ready: boolean;
   execution_ready: boolean;
 };
 
 type OAuthStart = { authorization_url: string };
+type GitHubAppStart = { installation_url: string };
+type GitHubAppInstallation = {
+  id: string;
+  installation_id: number;
+  account_login: string;
+  account_type: string;
+  repository_selection: string;
+  permissions: Record<string, string>;
+  status: string;
+  last_verified_at: string;
+  created_at: string;
+};
+type GitHubAppStatus = {
+  configured: boolean;
+  connected: boolean;
+  execution_enabled: boolean;
+  installations: GitHubAppInstallation[];
+};
+type GitHubAuthorizedRepository = {
+  installation_id: string;
+  repository_id: number;
+  full_name: string;
+  private: boolean;
+  visibility: string;
+  default_branch: string | null;
+  permissions: Record<string, boolean>;
+};
+type GitHubAuthorizedRepositoryList = {
+  items: GitHubAuthorizedRepository[];
+  total: number;
+};
 
 type TestResult = {
   id: string;
@@ -114,10 +150,24 @@ function metadataText(value: unknown) {
   return typeof value === "string" ? value : null;
 }
 
+function githubCallbackError(code: string | null) {
+  if (!code) return "";
+  const messages: Record<string, string> = {
+    invalid_callback: "GitHub returned an incomplete installation callback. Start the installation again.",
+    github_install_state_invalid: "The GitHub installation session expired or was already used. Start again.",
+    github_installation_in_use: "That GitHub App installation is already connected to another workspace.",
+    github_app_authorization_failed: "GitHub rejected the App authorization. Check the App configuration and permissions.",
+    github_provider_unavailable: "GitHub is temporarily unavailable. Try the installation again shortly.",
+  };
+  return messages[code] || "The GitHub App installation could not be completed.";
+}
+
 export default function IntegrationControlCenter() {
   const { data: session } = useSession();
+  const query = useSearchParams();
   const canManage = session?.workspaceRole === "owner" || session?.workspaceRole === "admin";
   const [showWordPressForm, setShowWordPressForm] = useState(false);
+  const [showGitHubMapping, setShowGitHubMapping] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -134,6 +184,15 @@ export default function IntegrationControlCenter() {
     session?.accessToken && session.workspaceId ? "/integrations/google-data/status" : null,
     apiFetch,
   );
+  const { data: githubApp, mutate: mutateGitHubApp } = useSWR<GitHubAppStatus>(
+    session?.accessToken && session.workspaceId ? "/integrations/github-app/status" : null,
+    apiFetch,
+  );
+  const { data: authorizedRepositories, mutate: mutateAuthorizedRepositories } =
+    useSWR<GitHubAuthorizedRepositoryList>(
+      githubApp?.connected ? "/integrations/github-app/repositories" : null,
+      apiFetch,
+    );
 
   const githubKey = sites
     ? `github-repositories:${sites.map((site) => site.id).sort().join(",")}`
@@ -157,7 +216,17 @@ export default function IntegrationControlCenter() {
   const googleAuthorized = google?.status === "connected" || google?.status === "configured";
   const gscConfigured = Boolean(googleAuthorized && google?.gsc_property);
   const ga4Configured = Boolean(googleAuthorized && google?.ga4_property_id);
-  const activeCount = wordpress.length + connectedGithub.length + Number(gscConfigured) + Number(ga4Configured);
+  const activeInstallations = githubApp?.installations.filter((item) => item.status === "active") ?? [];
+  const callbackError = githubCallbackError(query.get("github_app_error"));
+  const callbackNotice = query.get("github_app") === "connected"
+    ? "GitHub App authorization connected. Choose an authorized repository to map it to a site."
+    : "";
+  const activeCount =
+    wordpress.length +
+    connectedGithub.length +
+    activeInstallations.length +
+    Number(gscConfigured) +
+    Number(ga4Configured);
 
   function clearMessages() {
     setError("");
@@ -180,6 +249,63 @@ export default function IntegrationControlCenter() {
       window.location.assign(response.authorization_url);
     } catch (requestError) {
       showError(requestError);
+      setBusy(null);
+    }
+  }
+
+  async function startGitHubApp() {
+    setBusy("github-app");
+    clearMessages();
+    try {
+      const response = await apiFetch<GitHubAppStart>("/integrations/github-app/start", {
+        method: "POST",
+      });
+      window.location.assign(response.installation_url);
+    } catch (requestError) {
+      showError(requestError);
+      setBusy(null);
+    }
+  }
+
+  async function mapAuthorizedRepository(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy("github-map");
+    clearMessages();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const selection = String(formData.get("repository") || "");
+    const [installationId, repositoryId] = selection.split(":");
+    try {
+      await apiFetch<GitHubRepositoryStatus>("/integrations/github-repository", {
+        method: "POST",
+        body: JSON.stringify({
+          site_id: String(formData.get("site_id") || ""),
+          installation_id: installationId,
+          repository_id: Number(repositoryId),
+        }),
+      });
+      form.reset();
+      setShowGitHubMapping(false);
+      await Promise.all([mutateGithub(), mutateAuthorizedRepositories()]);
+      setNotice("GitHub App repository authorization mapped to the selected site. Execution remains disabled.");
+    } catch (requestError) {
+      showError(requestError);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function disconnectGitHubApp(installation: GitHubAppInstallation) {
+    if (!window.confirm(`Disconnect the ${installation.account_login} GitHub App installation from this workspace?`)) return;
+    setBusy(`github-app-${installation.id}`);
+    clearMessages();
+    try {
+      await apiFetch(`/integrations/github-app/${installation.id}`, { method: "DELETE" });
+      await Promise.all([mutateGitHubApp(), mutateGithub(), mutateAuthorizedRepositories()]);
+      setNotice("GitHub App authorization was disconnected locally. No repository was modified.");
+    } catch (requestError) {
+      showError(requestError);
+    } finally {
       setBusy(null);
     }
   }
@@ -341,8 +467,8 @@ export default function IntegrationControlCenter() {
       </section>
 
       <main className="mx-auto max-w-7xl space-y-8 px-4 py-8 sm:px-6 sm:py-10 lg:px-8 lg:py-12">
-        {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error}</div>}
-        {notice && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">{notice}</div>}
+        {(error || callbackError) && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error || callbackError}</div>}
+        {(notice || callbackNotice) && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">{notice || callbackNotice}</div>}
 
         <section>
           <div className="flex items-end justify-between gap-4">
@@ -379,21 +505,42 @@ export default function IntegrationControlCenter() {
             <ProviderCard
               initials="GH"
               name="GitHub"
-              description="Maps a website to its public source repository. Private repository execution will use the governed GitHub App."
-              status={connectedGithub.length ? "Configured" : "Not connected"}
-              configured={connectedGithub.length > 0}
+              description="GitHub App authorization for private repositories. Installation tokens stay server-side and expire after one hour."
+              status={githubApp?.connected ? "Authorized" : githubApp?.configured ? "Not installed" : "Unavailable"}
+              configured={Boolean(githubApp?.connected)}
               detail={
-                connectedGithub.length
-                  ? connectedGithub.map((item) => item.repository).filter(Boolean).join(", ")
-                  : "No repository mapped"
+                activeInstallations.length
+                  ? `${activeInstallations.length} App installation${activeInstallations.length === 1 ? "" : "s"} · execution disabled`
+                  : githubApp?.configured
+                    ? "Install the App to authorize repositories"
+                    : "Configure the GitHub App on the backend"
               }
               action={
-                <Link
-                  href="/onboarding?step=cms&edit=1"
-                  className="inline-flex min-h-10 items-center rounded-full bg-[#202020] px-4 text-sm font-semibold text-white hover:bg-black"
-                >
-                  {connectedGithub.length ? "Manage repository" : "Connect GitHub"}
-                </Link>
+                canManage && githubApp?.configured ? (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={startGitHubApp}
+                      disabled={busy === "github-app"}
+                      className="min-h-10 rounded-full bg-[#202020] px-4 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
+                    >
+                      {busy === "github-app" ? "Opening GitHub…" : githubApp.connected ? "Add installation" : "Install GitHub App"}
+                    </button>
+                    {githubApp.connected && (
+                      <button
+                        type="button"
+                        onClick={() => setShowGitHubMapping((value) => !value)}
+                        className="min-h-10 rounded-full border border-[#202020] px-4 text-sm font-semibold"
+                      >
+                        {showGitHubMapping ? "Close mapping" : "Map repository"}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-xs text-[#8d8d8d]">
+                    {canManage ? "Backend configuration required" : "Owner or admin required"}
+                  </span>
+                )
               }
             />
 
@@ -459,6 +606,47 @@ export default function IntegrationControlCenter() {
           </section>
         )}
 
+        {showGitHubMapping && canManage && githubApp?.connected && (
+          <section className="overflow-hidden rounded-[22px] border border-[rgba(32,32,32,0.12)] bg-[#202020] text-white">
+            <div className="border-b border-white/10 p-6 sm:p-8">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">Authorized repository</p>
+              <h2 className="mt-2 text-3xl font-semibold tracking-[-0.045em]">Map GitHub repository</h2>
+              <p className="mt-2 text-sm leading-6 text-white/65">
+                This only authorizes and maps the repository. Branch creation, commits and pull requests remain disabled.
+              </p>
+            </div>
+            <form onSubmit={mapAuthorizedRepository} className="grid gap-5 p-6 sm:grid-cols-2 sm:p-8">
+              <label>
+                <span className="text-sm font-semibold">Site</span>
+                <select name="site_id" required className="mt-2 h-12 w-full rounded-full bg-white px-5 text-[#202020]">
+                  <option value="">Choose a site</option>
+                  {sites?.map((site) => <option key={site.id} value={site.id}>{site.name} · {site.domain}</option>)}
+                </select>
+              </label>
+              <label>
+                <span className="text-sm font-semibold">Authorized repository</span>
+                <select name="repository" required className="mt-2 h-12 w-full rounded-full bg-white px-5 text-[#202020]">
+                  <option value="">Choose a repository</option>
+                  {authorizedRepositories?.items.map((repository) => (
+                    <option
+                      key={`${repository.installation_id}:${repository.repository_id}`}
+                      value={`${repository.installation_id}:${repository.repository_id}`}
+                    >
+                      {repository.full_name} · {repository.visibility}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="sm:col-span-2 flex items-center justify-between gap-4 border-t border-white/10 pt-5">
+                <p className="text-xs text-white/55">{authorizedRepositories?.total ?? 0} repositories authorized by GitHub</p>
+                <button disabled={busy === "github-map"} className="min-h-12 rounded-full bg-[#ea2804] px-6 text-sm font-semibold text-white disabled:opacity-50">
+                  {busy === "github-map" ? "Verifying authorization…" : "Map repository"}
+                </button>
+              </div>
+            </form>
+          </section>
+        )}
+
         <section>
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#646464]">Connection inventory</p>
@@ -515,10 +703,13 @@ export default function IntegrationControlCenter() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-semibold">GitHub repository</h3>
                       <span className="rounded-full bg-[#2b9a66] px-2.5 py-1 text-[11px] font-semibold text-white">Configured</span>
-                      <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-900">Mapping only</span>
+                      <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${repository.authorization_ready ? "bg-blue-100 text-blue-900" : "bg-amber-100 text-amber-900"}`}>
+                        {repository.authorization_ready ? "App authorized" : "Public mapping"}
+                      </span>
+                      <span className="rounded-full bg-[#f3f0e8] px-2.5 py-1 text-[11px] font-semibold text-[#646464]">Execution disabled</span>
                     </div>
                     <p className="mt-1 text-sm text-[#646464]">{repository.repository}</p>
-                    <p className="mt-2 text-xs text-[#8d8d8d]">{siteNames.get(repository.site_id) || "Site"} · Private/write access requires GitHub App</p>
+                    <p className="mt-2 text-xs text-[#8d8d8d]">{siteNames.get(repository.site_id) || "Site"} · {repository.visibility || "unknown visibility"} · {repository.default_branch || "default branch unknown"}</p>
                   </div>
                   {canManage && (
                     <div className="flex flex-wrap gap-2">
@@ -532,6 +723,32 @@ export default function IntegrationControlCenter() {
                         Disconnect
                       </button>
                     </div>
+                  )}
+                </div>
+              </article>
+            ))}
+
+            {activeInstallations.map((installation) => (
+              <article key={installation.id} className="rounded-[20px] border border-[rgba(32,32,32,0.12)] bg-white p-5 sm:p-6">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-semibold">GitHub App · {installation.account_login}</h3>
+                      <span className="rounded-full bg-[#2b9a66] px-2.5 py-1 text-[11px] font-semibold text-white">Authorized</span>
+                      <span className="rounded-full bg-[#f3f0e8] px-2.5 py-1 text-[11px] font-semibold text-[#646464]">Execution disabled</span>
+                    </div>
+                    <p className="mt-1 text-sm text-[#646464]">{installation.account_type} · {installation.repository_selection} repositories</p>
+                    <p className="mt-2 text-xs text-[#8d8d8d]">Installation {installation.installation_id} · tokens are minted only when needed and never stored</p>
+                  </div>
+                  {canManage && (
+                    <button
+                      type="button"
+                      onClick={() => disconnectGitHubApp(installation)}
+                      disabled={busy === `github-app-${installation.id}`}
+                      className="min-h-10 rounded-full border border-red-200 px-4 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      Disconnect authorization
+                    </button>
                   )}
                 </div>
               </article>
