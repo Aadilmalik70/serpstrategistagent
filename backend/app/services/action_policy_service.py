@@ -64,6 +64,13 @@ def _target_paths(execution_target: dict[str, Any], proposed_diff: dict[str, Any
             values.append(raw)
         elif isinstance(raw, list):
             values.extend(str(item) for item in raw)
+    raw_files = proposed_diff.get("files")
+    if isinstance(raw_files, list):
+        values.extend(
+            str(item.get("path"))
+            for item in raw_files
+            if isinstance(item, dict) and item.get("path")
+        )
     return [value.strip().lower() for value in values if value and str(value).strip()]
 
 
@@ -77,6 +84,16 @@ def evaluate_action_policy(
     score = max(0, min(100, submitted_risk_score))
     reasons: list[str] = []
     normalized_type = action_type.strip().lower()
+
+    adapter = str(
+        execution_target.get("adapter")
+        or execution_target.get("provider")
+        or execution_target.get("type")
+        or ""
+    ).strip().lower()
+    if adapter == "github":
+        score = max(score, 30)
+        reasons.append("External repository mutation requires explicit operator approval")
 
     if normalized_type in HIGH_RISK_ACTIONS:
         score = max(score, 80)
@@ -97,6 +114,17 @@ def evaluate_action_policy(
         delete_count = int(delete_count)
     except (TypeError, ValueError):
         delete_count = 0
+    raw_files = proposed_diff.get("files")
+    if isinstance(raw_files, list):
+        delete_count = max(
+            delete_count,
+            sum(
+                1
+                for item in raw_files
+                if isinstance(item, dict)
+                and str(item.get("operation") or "").strip().lower() == "delete"
+            ),
+        )
     if delete_count > 0:
         score = max(score, 75)
         reasons.append("Proposed diff deletes existing content or files")

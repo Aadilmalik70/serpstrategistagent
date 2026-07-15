@@ -62,10 +62,11 @@ async def github_app_status(
     db: AsyncSession = Depends(get_db),
 ) -> GitHubAppStatusResponse:
     installations = await workspace_installations(db, workspace_id=context.workspace.id)
+    settings = get_settings()
     return GitHubAppStatusResponse(
         configured=github_app_configured(),
         connected=any(item.status == "active" for item in installations),
-        execution_enabled=False,
+        execution_enabled=settings.github_execution_enabled,
         installations=[_installation_response(item) for item in installations],
     )
 

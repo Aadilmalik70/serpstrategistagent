@@ -276,8 +276,9 @@ async def enqueue_execution(
 
     adapter_name = _adapter_name(action)
     try:
-        get_execution_adapter(adapter_name)
-    except ExecutionAdapterUnavailable as exc:
+        adapter = get_execution_adapter(adapter_name)
+        await adapter.preflight(action, db=db, operation="execute")
+    except ExecutionAdapterError as exc:
         raise ExecutionServiceError(str(exc), 409) from exc
 
     idempotency_key = f"execute:{action.id}:{action.version}"
@@ -337,8 +338,9 @@ async def enqueue_rollback(
 
     adapter_name = _adapter_name(action)
     try:
-        get_execution_adapter(adapter_name)
-    except ExecutionAdapterUnavailable as exc:
+        adapter = get_execution_adapter(adapter_name)
+        await adapter.preflight(action, db=db, operation="rollback")
+    except ExecutionAdapterError as exc:
         raise ExecutionServiceError(str(exc), 409) from exc
 
     before = await db.scalar(
@@ -617,7 +619,7 @@ async def process_execution_job(
     try:
         adapter = get_execution_adapter(job.adapter)
         if job.job_type == "execute":
-            before = await adapter.capture(action, phase="before")
+            before = await adapter.capture(action, phase="before", db=db)
             _create_snapshot(db, job=job, action=action, snapshot_type="before", snapshot=before)
             old_status = action.status
             action.status = "executing"
@@ -633,7 +635,7 @@ async def process_execution_job(
                 actor_user_id=None,
                 payload={"job_id": str(job.id), "attempt": job.attempt_count, "adapter": job.adapter},
             )
-            applied = await adapter.apply(action, before=before)
+            applied = await adapter.apply(action, before=before, db=db)
             action.executed_at = _now()
             mutation_applied = bool(adapter.mutation_enabled and applied.mutation_applied)
             await mark_action_measurement_mutation_applied(
@@ -686,8 +688,9 @@ async def process_execution_job(
                 action,
                 before=before,
                 execution_result=execution_result,
+                db=db,
             )
-            after = await adapter.capture(action, phase="after")
+            after = await adapter.capture(action, phase="after", db=db)
             _create_snapshot(db, job=job, action=action, snapshot_type="after", snapshot=after)
             if not validation.passed:
                 raise ExecutionValidationFailed(validation.summary)
@@ -749,7 +752,7 @@ async def process_execution_job(
                 actor_user_id=None,
                 payload={"job_id": str(job.id)},
             )
-            rolled_back = await adapter.rollback(action, before=before)
+            rolled_back = await adapter.rollback(action, before=before, db=db)
             rollback_snapshot = AdapterSnapshot(
                 data={"restored": before.data, "result": rolled_back.result},
                 external_revision=rolled_back.external_revision,

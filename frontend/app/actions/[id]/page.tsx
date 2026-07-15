@@ -96,6 +96,12 @@ function jobBadge(status: string) {
   return "bg-amber-100 text-amber-900";
 }
 
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 export default function OperatorActionDetailPage() {
   const params = useParams<{ id: string }>();
   const { data: session } = useSession();
@@ -237,6 +243,9 @@ export default function OperatorActionDetailPage() {
 
   const adapter = String(action.execution_target.adapter || action.execution_target.provider || action.execution_target.type || "not configured");
   const activeJob = jobs?.find((job) => ["queued", "running", "retry_wait"].includes(job.status));
+  const executionEnvelope = recordValue(action.execution_result?.execution);
+  const providerExecution = recordValue(executionEnvelope.execution);
+  const pullRequestUrl = typeof providerExecution.pull_request_url === "string" ? providerExecution.pull_request_url : null;
 
   return (
     <div className="min-h-screen bg-[#f9f7f3] text-[#202020]">
@@ -301,9 +310,12 @@ export default function OperatorActionDetailPage() {
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#646464]">Durable execution</p>
               <h2 className="mt-2 text-2xl font-semibold tracking-[-0.035em]">Jobs, leases and validation</h2>
-              <p className="mt-2 text-sm text-[#646464]">Adapter: <span className="font-semibold text-[#202020]">{adapter}</span>. GitHub and WordPress mutation adapters remain disabled; only the non-mutating simulation adapter can run.</p>
+              <p className="mt-2 text-sm text-[#646464]">Adapter: <span className="font-semibold text-[#202020]">{adapter}</span>. GitHub execution creates a human-reviewed draft PR from an approved exact file plan; WordPress execution and autonomous merge remain disabled.</p>
             </div>
-            {activeJob && canManage && <button onClick={() => cancelJob(activeJob.id)} disabled={Boolean(busy)} className="min-h-10 rounded-full border border-red-200 px-4 text-sm font-semibold text-red-700 disabled:opacity-50">Cancel active job</button>}
+            <div className="flex flex-wrap gap-2">
+              {pullRequestUrl && <a href={pullRequestUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center rounded-full bg-[#202020] px-4 text-sm font-semibold text-white">Open draft PR ↗</a>}
+              {activeJob && canManage && <button onClick={() => cancelJob(activeJob.id)} disabled={Boolean(busy)} className="min-h-10 rounded-full border border-red-200 px-4 text-sm font-semibold text-red-700 disabled:opacity-50">Cancel active job</button>}
+            </div>
           </div>
           <div className="mt-5 space-y-3">
             {!jobs && <div className="h-24 animate-pulse rounded-2xl bg-[#f3f0e8]" />}
