@@ -1,12 +1,14 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies.workspace import WorkspaceContext, get_current_workspace, require_workspace_role
 from app.schemas.operator_action import (
     ActionDecisionRequest,
+    ActionMeasurementResponse,
     ActionTransitionRequest,
     OperatorActionCreate,
     OperatorActionDetailResponse,
@@ -14,6 +16,7 @@ from app.schemas.operator_action import (
     OperatorActionQueueResponse,
     OperatorActionResponse,
 )
+from app.models.search_performance import ActionMeasurement
 from app.services.operator_action_service import (
     OperatorActionServiceError,
     action_to_dict,
@@ -26,6 +29,7 @@ from app.services.operator_action_service import (
     list_events,
     propose_action,
 )
+from app.services.search_performance_service import refresh_action_measurements
 
 router = APIRouter(prefix="/operator-actions", tags=["operator-actions"])
 
@@ -114,6 +118,69 @@ async def get_operator_action_events(
     except OperatorActionServiceError as exc:
         raise _service_error(exc) from exc
     return [OperatorActionEventResponse(**event_to_dict(event)) for event in events]
+
+
+def _measurement_response(item) -> ActionMeasurementResponse:
+    return ActionMeasurementResponse(
+        id=item.id,
+        action_id=item.action_id,
+        window_days=item.window_days,
+        status=item.status,
+        outcome=item.outcome,
+        target_query=item.target_query,
+        target_url=item.target_url,
+        baseline_start=item.baseline_start,
+        baseline_end=item.baseline_end,
+        baseline_metrics=item.baseline_metrics or {},
+        comparison_start=item.comparison_start,
+        comparison_end=item.comparison_end,
+        comparison_metrics=item.comparison_metrics or {},
+        delta=item.delta or {},
+        confidence_score=item.confidence_score,
+        mutation_applied=item.mutation_applied,
+        measured_at=item.measured_at,
+    )
+
+
+@router.get("/{action_id}/measurements", response_model=list[ActionMeasurementResponse])
+async def get_action_measurements(
+    action_id: uuid.UUID,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+) -> list[ActionMeasurementResponse]:
+    try:
+        action = await get_action(db, context.workspace.id, action_id)
+    except OperatorActionServiceError as exc:
+        raise _service_error(exc) from exc
+    records = list(
+        (
+            await db.execute(
+                select(ActionMeasurement)
+                .where(
+                    ActionMeasurement.action_id == action.id,
+                    ActionMeasurement.workspace_id == context.workspace.id,
+                )
+                .order_by(ActionMeasurement.window_days.asc())
+            )
+        ).scalars().all()
+    )
+    return [_measurement_response(item) for item in records]
+
+
+@router.post("/{action_id}/measurements/refresh", response_model=list[ActionMeasurementResponse])
+async def refresh_operator_action_measurements(
+    action_id: uuid.UUID,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+) -> list[ActionMeasurementResponse]:
+    require_workspace_role(context, "owner", "admin")
+    try:
+        action = await get_action(db, context.workspace.id, action_id)
+    except OperatorActionServiceError as exc:
+        raise _service_error(exc) from exc
+    records = await refresh_action_measurements(db, action)
+    await db.commit()
+    return [_measurement_response(item) for item in records]
 
 
 @router.post("/{action_id}/propose", response_model=OperatorActionResponse)

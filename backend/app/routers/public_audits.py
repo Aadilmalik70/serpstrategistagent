@@ -78,7 +78,6 @@ async def read_free_audit(
 )
 async def claim_free_audit(
     token: str,
-    background_tasks: BackgroundTasks,
     context: WorkspaceContext = Depends(get_current_workspace),
     db: AsyncSession = Depends(get_db),
 ) -> FreeAuditClaimResponse:
@@ -156,7 +155,6 @@ async def claim_free_audit(
 
     crawl = await start_crawl(
         data=CrawlRequest(site_id=site.id),
-        background_tasks=background_tasks,
         context=context,
         db=db,
     )

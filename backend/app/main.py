@@ -28,28 +28,46 @@ from app.routers import (
     workspaces,
 )
 from app.services.entitlement_service import QuotaExceededError
-from app.services.scheduler import start_execution_worker, start_scheduler, stop_scheduler
+from app.services.scheduler import (
+    start_crawl_worker,
+    start_execution_worker,
+    start_search_sync_worker,
+    start_scheduler,
+    stop_scheduler,
+)
+from app.services.rendered_crawler import verify_renderer_runtime
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if settings.crawler_render_enabled:
+        await verify_renderer_runtime()
     if settings.scheduler_enabled:
         start_scheduler()
     if settings.execution_worker_enabled:
         start_execution_worker()
+    if settings.crawl_worker_enabled:
+        start_crawl_worker()
+    if settings.search_sync_worker_enabled:
+        start_search_sync_worker()
 
     yield
 
-    if settings.scheduler_enabled or settings.execution_worker_enabled:
+    if (
+        settings.scheduler_enabled
+        or settings.execution_worker_enabled
+        or settings.crawl_worker_enabled
+        or settings.search_sync_worker_enabled
+    ):
         stop_scheduler()
     await engine.dispose()
 
 
 app = FastAPI(
     title="SERP Strategists Operator API",
-    version="0.11.1",
+    version="0.14.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
@@ -136,6 +154,9 @@ async def health():
         "crawler": "first_party",
         "librecrawl": "optional" if settings.librecrawl_enabled else "disabled",
         "execution_worker": "enabled" if settings.execution_worker_enabled else "disabled",
+        "crawl_worker": "enabled" if settings.crawl_worker_enabled else "disabled",
+        "search_sync_worker": "enabled" if settings.search_sync_worker_enabled else "disabled",
+        "javascript_rendering": "enabled" if settings.crawler_render_enabled else "disabled",
     }
 
 
@@ -161,6 +182,10 @@ async def readiness():
             await redis.aclose()
     else:
         checks["redis"] = "not_configured"
+
+    checks["javascript_rendering"] = (
+        "startup_verified" if settings.crawler_render_enabled else "disabled"
+    )
 
     is_ready = checks["database"] == "ok" and checks["redis"] in {"ok", "not_configured"}
     payload = {"status": "ready" if is_ready else "not_ready", "checks": checks}

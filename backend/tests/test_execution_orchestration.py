@@ -109,7 +109,13 @@ def test_simulation_execution_validation_and_rollback_are_durable() -> None:
         owner = _register(client, f"execution-owner-{suffix}@example.com", "Execution Owner")
         outsider = _register(client, f"execution-outsider-{suffix}@example.com", "Execution Outsider")
         site_id = _create_site(client, owner, suffix)
-        action = _create_approved_action(client, owner, site_id, suffix)
+        action = _create_approved_action(
+            client,
+            owner,
+            site_id,
+            suffix,
+            adapter="Simulation",
+        )
 
         queued = client.post(
             f"/operator-actions/{action['id']}/execute",
@@ -120,6 +126,13 @@ def test_simulation_execution_validation_and_rollback_are_durable() -> None:
         execution_job = queued.json()
         assert execution_job["status"] == "queued"
         assert execution_job["adapter"] == "simulation"
+
+        measurements = client.get(
+            f"/operator-actions/{action['id']}/measurements",
+            headers=_headers(owner),
+        )
+        assert measurements.status_code == 200, measurements.text
+        assert measurements.json() == []
 
         duplicate = client.post(
             f"/operator-actions/{action['id']}/execute",
@@ -156,6 +169,7 @@ def test_simulation_execution_validation_and_rollback_are_durable() -> None:
         )
         assert job_detail.status_code == 200, job_detail.text
         execution_detail = job_detail.json()
+        assert execution_detail["result"]["mutation_applied"] is False
         assert execution_detail["attempts"][0]["status"] == "succeeded"
         before_snapshot = next(
             item for item in execution_detail["snapshots"] if item["snapshot_type"] == "before"

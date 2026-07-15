@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import first_party_crawler as crawler
+from app.services.crawl_job_service import run_crawl_worker_tick
 from app.services.first_party_crawler import FetchResult
 
 
@@ -111,6 +112,8 @@ def test_findings_are_reconciled_and_regressions_create_new_governed_actions(mon
             json={"site_id": site_id, "max_pages": 10},
         )
         assert crawl.status_code == 202, crawl.text
+        assert client.portal is not None
+        client.portal.call(run_crawl_worker_tick, uuid.UUID(crawl.json()["job_id"]))
 
         first = client.post(
             f"/technical-findings/sites/{site_id}/refresh",
@@ -148,6 +151,7 @@ def test_findings_are_reconciled_and_regressions_create_new_governed_actions(mon
             json={"site_id": site_id, "max_pages": 10},
         )
         assert recrawl.status_code == 202
+        client.portal.call(run_crawl_worker_tick, uuid.UUID(recrawl.json()["job_id"]))
         resolved = client.post(
             f"/technical-findings/sites/{site_id}/refresh",
             headers=_headers(owner),
@@ -162,6 +166,10 @@ def test_findings_are_reconciled_and_regressions_create_new_governed_actions(mon
             json={"site_id": site_id, "max_pages": 10},
         )
         assert regression_crawl.status_code == 202
+        client.portal.call(
+            run_crawl_worker_tick,
+            uuid.UUID(regression_crawl.json()["job_id"]),
+        )
         regressed = client.post(
             f"/technical-findings/sites/{site_id}/refresh",
             headers=_headers(owner),

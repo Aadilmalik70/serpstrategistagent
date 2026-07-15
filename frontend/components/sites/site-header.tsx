@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { apiFetch, OperatorApiError } from "@/lib/api";
 
@@ -27,6 +27,7 @@ type AgentStatus = {
 };
 type CrawlStart = { job_id: string; status: string; reused?: boolean };
 type CrawlStatus = {
+  job_id?: string;
   status: string;
   pages_discovered: number;
   pages_crawled: number;
@@ -39,16 +40,74 @@ const TERMINAL_CRAWL_STATES = new Set(["completed", "failed", "cancelled"]);
 export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: SiteHeaderProps) {
   const [runningAgent, setRunningAgent] = useState(false);
   const [runningCrawl, setRunningCrawl] = useState(false);
+  const [currentCrawlJobId, setCurrentCrawlJobId] = useState<string | null>(null);
+  const [lastCrawlStatus, setLastCrawlStatus] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
   const [statusError, setStatusError] = useState(false);
+
+  useEffect(() => {
+    let stopped = false;
+
+    async function hydrateLatestCrawl() {
+      try {
+        let crawl = await apiFetch<CrawlStatus>(`/crawl/site/${site.id}/latest`);
+        if (stopped || !crawl.job_id) return;
+        const jobId = crawl.job_id;
+        setCurrentCrawlJobId(jobId);
+        setLastCrawlStatus(crawl.status);
+        if (TERMINAL_CRAWL_STATES.has(crawl.status)) return;
+
+        setRunningCrawl(true);
+        for (let attempt = 0; attempt < 240 && !stopped; attempt += 1) {
+          setStatusMessage(
+            crawl.status === "retry_wait"
+              ? "Retry scheduled after a recoverable crawl failure."
+              : crawl.status === "queued"
+                ? "Crawl queued for the durable worker…"
+                : `Crawling: ${crawl.pages_crawled}/${Math.max(crawl.pages_discovered, crawl.pages_crawled)} pages`,
+          );
+          await new Promise((resolve) => window.setTimeout(resolve, 1250));
+          if (stopped) return;
+          crawl = await apiFetch<CrawlStatus>(`/crawl/${jobId}`);
+          setLastCrawlStatus(crawl.status);
+          if (!TERMINAL_CRAWL_STATES.has(crawl.status)) continue;
+          setRunningCrawl(false);
+          if (crawl.status === "completed" && crawl.pages_crawled > 0) {
+            setStatusError(false);
+            setStatusMessage(`Crawl completed: ${crawl.pages_crawled} pages.`);
+            onCrawlComplete?.();
+          } else if (crawl.status === "cancelled") {
+            setStatusError(false);
+            setStatusMessage("Crawl cancelled. Its saved checkpoint can be resumed.");
+          } else {
+            setStatusError(true);
+            setStatusMessage(crawl.error || "The crawl failed before any page could be stored.");
+          }
+          return;
+        }
+      } catch {
+        // The page remains usable; an explicit action will surface API errors.
+      }
+    }
+
+    void hydrateLatestCrawl();
+    return () => {
+      stopped = true;
+    };
+  }, [onCrawlComplete, site.id]);
 
   async function waitForCrawl(jobId: string): Promise<boolean> {
     for (let attempt = 0; attempt < 240; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 1250));
       const crawl = await apiFetch<CrawlStatus>(`/crawl/${jobId}`);
+      setLastCrawlStatus(crawl.status);
       setStatusMessage(
         crawl.status === "completed"
           ? `Crawl completed: ${crawl.pages_crawled} pages.`
+          : crawl.status === "retry_wait"
+            ? `Retry scheduled after a recoverable failure (${crawl.pages_crawled} pages saved).`
+            : crawl.status === "queued"
+              ? "Crawl queued for the durable worker…"
           : `Crawling: ${crawl.pages_crawled}/${Math.max(crawl.pages_discovered, crawl.pages_crawled)} pages`,
       );
       if (TERMINAL_CRAWL_STATES.has(crawl.status)) {
@@ -56,6 +115,11 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
           setStatusError(false);
           onCrawlComplete?.();
           return true;
+        }
+        if (crawl.status === "cancelled") {
+          setStatusError(false);
+          setStatusMessage("Crawl cancelled. Its saved checkpoint can be resumed.");
+          return false;
         }
         setStatusError(true);
         setStatusMessage(crawl.error || "The crawl failed before any page could be stored.");
@@ -77,6 +141,8 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
         method: "POST",
         body: JSON.stringify({ site_id: site.id }),
       });
+      setCurrentCrawlJobId(crawl.job_id);
+      setLastCrawlStatus(crawl.status);
       return await waitForCrawl(crawl.job_id);
     } catch (error) {
       setStatusError(true);
@@ -84,6 +150,45 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
         error instanceof OperatorApiError ? error.message : "The crawl could not be started.",
       );
       return false;
+    } finally {
+      setRunningCrawl(false);
+    }
+  }
+
+  async function cancelCrawl() {
+    if (!currentCrawlJobId || !runningCrawl) return;
+    try {
+      const crawl = await apiFetch<CrawlStatus>(`/crawl/${currentCrawlJobId}/cancel`, { method: "POST" });
+      setLastCrawlStatus(crawl.status);
+      setStatusMessage(
+        crawl.status === "cancelled"
+          ? "Crawl cancelled. Its saved checkpoint can be resumed."
+          : "Cancellation requested. The worker will stop after the active batch.",
+      );
+    } catch (error) {
+      setStatusError(true);
+      setStatusMessage(
+        error instanceof OperatorApiError ? error.message : "The crawl could not be cancelled.",
+      );
+    }
+  }
+
+  async function resumeCrawl() {
+    if (!currentCrawlJobId || runningCrawl || runningAgent) return;
+    setRunningCrawl(true);
+    setStatusError(false);
+    setStatusMessage("Resuming from the durable crawl checkpoint…");
+    try {
+      const crawl = await apiFetch<CrawlStart>(`/crawl/${currentCrawlJobId}/resume`, {
+        method: "POST",
+      });
+      setLastCrawlStatus(crawl.status);
+      await waitForCrawl(crawl.job_id);
+    } catch (error) {
+      setStatusError(true);
+      setStatusMessage(
+        error instanceof OperatorApiError ? error.message : "The crawl could not be resumed.",
+      );
     } finally {
       setRunningCrawl(false);
     }
@@ -166,6 +271,25 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
             >
               {runningCrawl ? "Crawling…" : site.page_count > 0 ? "Recrawl Site" : "Crawl Site"}
             </button>
+            {runningCrawl && currentCrawlJobId ? (
+              <button
+                type="button"
+                onClick={() => void cancelCrawl()}
+                className="rounded-md border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+              >
+                Cancel Crawl
+              </button>
+            ) : null}
+            {!runningCrawl && currentCrawlJobId && ["failed", "cancelled"].includes(lastCrawlStatus || "") ? (
+              <button
+                type="button"
+                onClick={() => void resumeCrawl()}
+                disabled={runningAgent}
+                className="rounded-md border border-blue-200 bg-white px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+              >
+                Resume Crawl
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={handleRunAgent}

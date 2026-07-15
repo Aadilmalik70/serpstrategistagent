@@ -10,7 +10,6 @@ from app.services.onboarding_launch_service import (
     google_launch_connection,
     queue_initial_crawl,
     run_google_baseline_background,
-    run_initial_crawl_background,
 )
 from app.services.onboarding_service import (
     OnboardingServiceError,
@@ -109,16 +108,6 @@ async def finish_onboarding(
             workspace_id=context.workspace.id,
             site_id=site_id,
         )
-        if created:
-            background_tasks.add_task(
-                run_initial_crawl_background,
-                context.workspace.id,
-                site.id,
-                site.domain,
-                max_pages,
-                job.id,
-            )
-
         google_connection = await google_launch_connection(
             db,
             workspace_id=context.workspace.id,

@@ -62,6 +62,36 @@ class Settings(BaseSettings):
     crawler_max_response_bytes: int = 2_000_000
     crawler_max_redirects: int = 5
     crawler_sitemap_limit: int = 10
+    crawler_render_enabled: bool = False
+    crawler_render_max_pages: int = 10
+    crawler_render_timeout_seconds: float = 15.0
+    crawler_device_compare_max_pages: int = 3
+    crawler_adaptive_max_delay_seconds: float = 8.0
+
+    # Durable crawl queue. PostgreSQL is authoritative; Redis only reduces wake-up latency.
+    crawl_worker_enabled: bool = False
+    crawl_worker_poll_seconds: int = 3
+    crawl_worker_batch_size: int = 2
+    crawl_job_lease_seconds: int = 120
+    crawl_job_max_attempts: int = 3
+    crawl_retry_base_seconds: int = 5
+    crawl_queue_key: str = "serp:crawl:ready"
+
+    # Durable Search Console ingestion and measurement worker.
+    search_sync_worker_enabled: bool = False
+    search_sync_worker_poll_seconds: int = 15
+    search_sync_worker_batch_size: int = 2
+    search_sync_job_lease_seconds: int = 180
+    search_sync_job_max_attempts: int = 4
+    search_sync_retry_base_seconds: int = 30
+    search_sync_queue_key: str = "serp:gsc-sync:ready"
+    search_sync_lookback_days: int = 90
+    search_sync_finalization_lag_days: int = 3
+    search_sync_page_size: int = 25_000
+    search_sync_max_rows: int = 100_000
+    search_sync_max_total_rows: int = 500_000
+    search_sync_min_interval_minutes: int = 1_440
+    search_opportunity_action_limit: int = 100
 
     app_env: str = "development"
     debug: bool = True
@@ -123,6 +153,7 @@ class Settings(BaseSettings):
             or self.google_integration_timeout_seconds <= 0
             or self.crawler_timeout_seconds <= 0
             or self.crawler_connect_timeout_seconds <= 0
+            or self.crawler_render_timeout_seconds <= 0
         ):
             raise ValueError("Provider and crawler timeouts must be greater than zero")
         if (
@@ -131,10 +162,31 @@ class Settings(BaseSettings):
             or self.execution_job_lease_seconds <= 0
             or self.execution_job_max_attempts <= 0
             or self.execution_retry_base_seconds <= 0
+            or self.crawl_worker_poll_seconds <= 0
+            or self.crawl_worker_batch_size <= 0
+            or self.crawl_job_lease_seconds <= 0
+            or self.crawl_job_max_attempts <= 0
+            or self.crawl_retry_base_seconds <= 0
+            or self.search_sync_worker_poll_seconds <= 0
+            or self.search_sync_worker_batch_size <= 0
+            or self.search_sync_job_lease_seconds <= 0
+            or self.search_sync_job_max_attempts <= 0
+            or self.search_sync_retry_base_seconds <= 0
+            or self.search_sync_lookback_days < 28
+            or not 2 <= self.search_sync_finalization_lag_days <= 7
+            or self.search_sync_page_size <= 0
+            or self.search_sync_page_size > 25_000
+            or self.search_sync_max_rows <= 0
+            or self.search_sync_max_total_rows <= 0
+            or self.search_sync_min_interval_minutes < 0
+            or not 1 <= self.search_opportunity_action_limit <= 500
             or self.crawler_concurrency <= 0
             or self.crawler_max_response_bytes <= 0
             or self.crawler_max_redirects <= 0
             or self.crawler_sitemap_limit <= 0
+            or self.crawler_render_max_pages < 0
+            or self.crawler_device_compare_max_pages < 0
+            or self.crawler_adaptive_max_delay_seconds <= 0
             or self.crawler_request_delay_ms < 0
         ):
             raise ValueError("Execution worker and crawler limits must be valid positive values")

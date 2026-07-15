@@ -4,11 +4,24 @@ from urllib.parse import urlsplit
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.database import async_session_factory
+from app.models.job_queue import JobQueue
+from app.services.crawl_job_service import run_crawl_worker_tick
 from app.services import first_party_crawler as crawler
 from app.services.first_party_crawler import CrawlError, FetchResult, PageHtmlParser
 
 
 PASSWORD = "correct-horse-battery-staple"
+
+
+def test_validated_destination_is_pinned_without_changing_host_identity() -> None:
+    pinned, sni_hostname, host_header = crawler._pinned_target_url(
+        "https://example.com/path?q=1",
+        "203.0.113.10",
+    )
+    assert pinned == "https://203.0.113.10/path?q=1"
+    assert sni_hostname == "example.com"
+    assert host_header == "example.com"
 
 
 def _register(client: TestClient, email: str, workspace_name: str) -> dict:
@@ -139,6 +152,9 @@ def test_first_party_crawl_discovers_pages_and_persists_progress(monkeypatch) ->
         )
         assert started.status_code == 202, started.text
         job_id = started.json()["job_id"]
+        assert started.json()["status"] == "queued"
+        assert client.portal is not None
+        client.portal.call(run_crawl_worker_tick, uuid.UUID(job_id))
 
         status = client.get(f"/crawl/{job_id}", headers=_headers(owner))
         assert status.status_code == 200, status.text
@@ -187,9 +203,21 @@ def test_first_party_crawl_exposes_terminal_failure(monkeypatch) -> None:
             json={"site_id": site_id, "max_pages": 5},
         )
         assert started.status_code == 202, started.text
+        job_id = uuid.UUID(started.json()["job_id"])
+
+        async def exhaust_retry_budget() -> None:
+            async with async_session_factory() as db:
+                job = await db.get(JobQueue, job_id)
+                assert job is not None
+                job.max_attempts = 1
+                await db.commit()
+
+        assert client.portal is not None
+        client.portal.call(exhaust_retry_budget)
+        client.portal.call(run_crawl_worker_tick, job_id)
 
         status = client.get(
-            f"/crawl/{started.json()['job_id']}",
+            f"/crawl/{job_id}",
             headers=_headers(owner),
         )
         assert status.status_code == 200
