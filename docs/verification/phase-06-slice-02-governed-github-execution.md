@@ -80,24 +80,62 @@ Do not place `GITHUB_APP_PRIVATE_KEY_BASE64` in the frontend service.
 
 ## UI smoke test
 
-1. Open **Settings → Integrations**.
-2. Confirm the mapped sandbox repository shows **Draft PR ready**.
-3. Create or select a draft action whose exact file plan targets that site.
-4. Run policy evaluation. GitHub actions must require explicit approval even
+### Prerequisites
+
+1. Use a disposable repository and a disposable site mapping. Do not test the
+   first rollout against the product repository.
+2. Apply migration `022`, deploy the API and worker from the same commit, and
+   enable both `EXECUTION_WORKER_ENABLED=true` and
+   `GITHUB_EXECUTION_ENABLED=true` on those services.
+3. Connect the GitHub App at **Settings → Integrations**, select the disposable
+   repository, and map it to the test site.
+4. Confirm the repository card shows **Draft PR ready**. If it does not, stop:
+   the App permissions, installation, mapping, or rollout flags are incomplete.
+
+### Create the test action
+
+The current Technical Findings UI creates simulation actions; it does not yet
+author arbitrary full-file GitHub patches. For this slice, create one governed
+test action through the API (or an approved fixture) with the exact contract
+shown above, then copy its returned `id`. Use a harmless file such as
+`docs/serp-operator-smoke.md`, an idempotency key unique to the run, and the
+disposable site's `site_id`.
+
+Do not substitute a generated recommendation for the exact `proposed_diff.files`
+contract. The worker must execute only content that was visible during approval.
+
+### Browser workflow
+
+1. Open **Actions** and select the test action, or browse directly to
+   `/actions/<action-id>`.
+2. Expand **Execution target** and **Proposed diff**. Confirm the adapter is
+   `github`, the base branch is correct, and every path/content value matches
+   the intended disposable-repository change.
+3. Select **Run policy & propose**. GitHub actions must enter
+   **Needs approval** even
    when their original action type is otherwise auto-approvable.
-5. Approve the action.
-6. Select **Queue execution**.
-7. Wait for the execute and validate jobs to succeed.
-8. Confirm the action displays **Open draft PR**.
-9. In GitHub, verify:
+4. Confirm the policy reason says repository mutation needs explicit operator
+   approval, then select **Approve**.
+5. Select **Queue execution**. Open the execution job and wait for both the
+   execute and validate jobs to succeed; refresh if the worker is asynchronous.
+6. Return to the action and confirm it displays **Open draft PR**.
+7. Follow that link and verify in GitHub:
    - the branch name starts with `serp-operator/action-`;
    - one non-merge commit contains the approved file changes;
    - the pull request is a draft;
    - the target is the snapshotted base branch;
    - no protected file changed;
    - no merge occurred.
-10. Select **Queue rollback** before merging. Confirm the draft PR closes and
+8. Return to the action and select **Queue rollback** before merging. Confirm
+    the draft PR closes and
     the unchanged action branch is deleted.
+
+### Browser negative test
+
+Create a second draft action that targets `.github/workflows/smoke.yml` or
+`.env.production`. Open it in **Actions**, select **Run policy & propose**, and
+confirm the action becomes **Blocked**. No execution job, branch, commit, or pull
+request may be created.
 
 ## Negative checks
 
