@@ -184,7 +184,10 @@ async def enqueue_url_inspection(
         )
         if recent:
             recent_urls = [str(value) for value in (recent.payload or {}).get("urls", [])]
-            if recent.status == "completed" and recent_urls == selected:
+            # An empty request means "use the best candidates". During the
+            # cooldown, return the most recent completed inspection instead of
+            # deriving a new candidate list and then rejecting it as different.
+            if recent.status == "completed" and (not urls or recent_urls == selected):
                 return recent, True
             retry_at = recent.created_at + timedelta(minutes=settings.url_inspection_min_interval_minutes)
             retry_after = max(1, int((retry_at - _now()).total_seconds()) + 1)

@@ -110,7 +110,7 @@ async def get_site_endpoint(
         issue_count=issue_count,
         tech_stack=site.tech_stack,
         cms=site.cms,
-        github_connected=bool(site.github_repo and site.github_token),
+        github_connected=bool(site.github_repo),
         wordpress_connected=bool(site.wordpress_url and site.wordpress_user and site.wordpress_app_password),
         health_score=health_score,
         health_grade=health_grade,

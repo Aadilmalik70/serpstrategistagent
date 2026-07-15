@@ -15,7 +15,6 @@ from app.models.issue import Issue
 from app.models.site import Site
 from app.services.fix_executor import execute_fix_action
 from app.services.fix_planner import generate_bulk_fix_plans, generate_fix_plan
-from app.services.github_integration import GitHubIntegration
 from app.services.site_service import get_site_by_id
 from app.services.tech_detector import detect_tech_stack
 from app.services.wordpress_integration import WordPressIntegration
@@ -132,7 +131,7 @@ async def get_integrations(
     site = await _require_site(db, context, site_id)
     return {
         "github_repo": site.github_repo,
-        "github_connected": bool(site.github_repo and site.github_token),
+        "github_connected": bool(site.github_repo),
         "wordpress_url": site.wordpress_url,
         "wordpress_connected": bool(site.wordpress_url and site.wordpress_user and site.wordpress_app_password),
         "tech_stack": site.tech_stack,
@@ -151,10 +150,14 @@ async def update_integrations(
     require_workspace_role(context, "owner", "admin")
     site = await _require_site(db, context, site_id)
 
-    if config.github_repo is not None:
-        site.github_repo = config.github_repo
-    if config.github_token is not None:
-        site.github_token = config.github_token
+    if config.github_repo is not None or config.github_token is not None:
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Legacy GitHub token configuration is disabled. Use the GitHub App and repository "
+                "mapping endpoints under /integrations instead."
+            ),
+        )
     if config.wordpress_url is not None:
         site.wordpress_url = config.wordpress_url
     if config.wordpress_user is not None:
@@ -178,13 +181,15 @@ async def verify_integrations(
     site = await _require_site(db, context, site_id)
     results: dict[str, dict] = {}
 
-    if site.github_repo and site.github_token:
-        results["github"] = await GitHubIntegration(
-            repo=site.github_repo,
-            token=site.github_token,
-        ).verify_connection()
-    else:
-        results["github"] = {"connected": False, "reason": "Not configured"}
+    results["github"] = {
+        "connected": bool(site.github_repo),
+        "reason": (
+            "Repository mapping is present; verify GitHub App authorization in Settings. "
+            "Execution remains disabled."
+            if site.github_repo
+            else "No repository is mapped"
+        ),
+    }
 
     if site.wordpress_url and site.wordpress_user and site.wordpress_app_password:
         results["wordpress"] = await WordPressIntegration(

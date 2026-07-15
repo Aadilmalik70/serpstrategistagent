@@ -496,12 +496,23 @@ async def detect_search_opportunities(
     )
     if not site:
         raise HTTPException(status_code=404, detail="Site not found in this workspace")
-    items = await reconcile_search_opportunities(
+    await reconcile_search_opportunities(
         db,
         workspace_id=context.workspace.id,
         site_id=site_id,
     )
     await db.commit()
+    items = list(
+        (
+            await db.execute(
+                select(SearchOpportunity).where(
+                    SearchOpportunity.workspace_id == context.workspace.id,
+                    SearchOpportunity.site_id == site_id,
+                    SearchOpportunity.status == "active",
+                )
+            )
+        ).scalars().all()
+    )
     ordered = sorted(
         items,
         key=lambda item: (-item.priority_score, -item.last_detected_at.timestamp(), str(item.id)),
