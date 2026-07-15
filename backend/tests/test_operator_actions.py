@@ -63,7 +63,7 @@ def _payload(site_id: str, *, action_type: str, risk_score: int, key: str, targe
         "confidence_score": 88,
         "effort_score": 20,
         "risk_score": risk_score,
-        "execution_target": target or {"adapter": "github", "path": "app/page.tsx"},
+        "execution_target": target or {"adapter": "simulation", "path": "app/page.tsx"},
         "proposed_diff": diff or {"affected_pages": 1, "summary": "Update metadata"},
         "rollback_plan": {"strategy": "revert_commit", "required": True},
         "measurement_plan": {"window_days": [7, 14, 30], "metrics": ["clicks", "ctr"]},
