@@ -37,6 +37,12 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:gsc:{uuid.uuid4().hex[:8]}"
 ACTIVE_STATUSES = {"queued", "running", "retry_wait"}
+SEARCH_ANALYTICS_OPPORTUNITY_TYPES = {
+    "low_ctr",
+    "striking_distance",
+    "traffic_decay",
+    "cannibalization",
+}
 
 
 class SearchPerformanceError(ValueError):
@@ -759,7 +765,11 @@ async def reconcile_search_opportunities(
         active.append(record)
     resolved: list[SearchOpportunity] = []
     for record in existing:
-        if record.status == "active" and record.opportunity_key not in seen:
+        if (
+            record.status == "active"
+            and record.opportunity_type in SEARCH_ANALYTICS_OPPORTUNITY_TYPES
+            and record.opportunity_key not in seen
+        ):
             record.status = "resolved"
             record.resolved_at = now
             resolved.append(record)

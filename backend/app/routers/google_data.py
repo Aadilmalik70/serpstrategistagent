@@ -18,9 +18,13 @@ from app.schemas.google_data import (
     SearchOpportunityListResponse,
     SearchOpportunityResponse,
     SearchSyncJobResponse,
+    UrlInspectionJobResponse,
+    UrlInspectionRequest,
+    UrlInspectionResultListResponse,
+    UrlInspectionResultResponse,
 )
 from app.models.job_queue import JobQueue
-from app.models.search_performance import SearchOpportunity
+from app.models.search_performance import SearchOpportunity, UrlInspectionResult
 from app.models.site import Site
 from app.services.credential_vault import CredentialVaultError
 from app.services.google_baseline_service import sync_google_baseline
@@ -37,6 +41,7 @@ from app.services.search_performance_service import (
     enqueue_search_sync,
     reconcile_search_opportunities,
 )
+from app.services.url_inspection_service import enqueue_url_inspection
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +98,26 @@ def _opportunity_response(item: SearchOpportunity) -> SearchOpportunityResponse:
         first_detected_at=item.first_detected_at,
         last_detected_at=item.last_detected_at,
         resolved_at=item.resolved_at,
+    )
+
+
+def _inspection_response(item: UrlInspectionResult) -> UrlInspectionResultResponse:
+    return UrlInspectionResultResponse(
+        id=item.id,
+        site_id=item.site_id,
+        inspection_url=item.inspection_url,
+        verdict=item.verdict,
+        coverage_state=item.coverage_state,
+        robots_txt_state=item.robots_txt_state,
+        indexing_state=item.indexing_state,
+        page_fetch_state=item.page_fetch_state,
+        crawled_as=item.crawled_as,
+        google_canonical=item.google_canonical,
+        user_canonical=item.user_canonical,
+        last_crawl_time=item.last_crawl_time,
+        referring_urls=[str(value) for value in (item.referring_urls or [])],
+        sitemap_urls=[str(value) for value in (item.sitemap_urls or [])],
+        inspected_at=item.inspected_at,
     )
 
 
@@ -305,6 +330,118 @@ async def search_analytics_sync_status(
     if not job:
         raise HTTPException(status_code=404, detail="Search sync job not found")
     return _job_response(job)
+
+
+@router.post(
+    "/url-inspection/{site_id}",
+    response_model=UrlInspectionJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_url_inspection(
+    site_id: uuid.UUID,
+    data: UrlInspectionRequest,
+    response: Response,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+) -> UrlInspectionJobResponse:
+    require_workspace_role(context, "owner", "admin")
+    try:
+        job, reused = await enqueue_url_inspection(
+            db,
+            workspace_id=context.workspace.id,
+            site_id=site_id,
+            urls=data.urls or None,
+        )
+    except SearchPerformanceError as exc:
+        raise _search_error(exc) from exc
+    response.status_code = (
+        status.HTTP_200_OK
+        if reused and job.status == "completed"
+        else status.HTTP_202_ACCEPTED
+    )
+    return UrlInspectionJobResponse(**_job_response(job, reused=reused).model_dump())
+
+
+@router.get(
+    "/url-inspection/sites/{site_id}/latest",
+    response_model=UrlInspectionJobResponse | None,
+)
+async def latest_url_inspection(
+    site_id: uuid.UUID,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+) -> UrlInspectionJobResponse | None:
+    site = await db.scalar(
+        select(Site).where(Site.id == site_id, Site.workspace_id == context.workspace.id)
+    )
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found in this workspace")
+    job = await db.scalar(
+        select(JobQueue)
+        .where(JobQueue.site_id == site_id, JobQueue.job_type == "gsc_url_inspection")
+        .order_by(JobQueue.created_at.desc(), JobQueue.id.desc())
+        .limit(1)
+    )
+    return UrlInspectionJobResponse(**_job_response(job).model_dump()) if job else None
+
+
+@router.get(
+    "/url-inspection/jobs/{job_id}",
+    response_model=UrlInspectionJobResponse,
+)
+async def url_inspection_status(
+    job_id: uuid.UUID,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+) -> UrlInspectionJobResponse:
+    job = await db.scalar(
+        select(JobQueue)
+        .join(Site, Site.id == JobQueue.site_id)
+        .where(
+            JobQueue.id == job_id,
+            JobQueue.job_type == "gsc_url_inspection",
+            Site.workspace_id == context.workspace.id,
+        )
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="URL Inspection job not found")
+    return UrlInspectionJobResponse(**_job_response(job).model_dump())
+
+
+@router.get(
+    "/url-inspection/results/{site_id}",
+    response_model=UrlInspectionResultListResponse,
+)
+async def list_url_inspection_results(
+    site_id: uuid.UUID,
+    limit: int = Query(default=50, ge=1, le=200),
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+) -> UrlInspectionResultListResponse:
+    site = await db.scalar(
+        select(Site).where(Site.id == site_id, Site.workspace_id == context.workspace.id)
+    )
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found in this workspace")
+    statement = select(UrlInspectionResult).where(
+        UrlInspectionResult.workspace_id == context.workspace.id,
+        UrlInspectionResult.site_id == site_id,
+    )
+    total = int(await db.scalar(select(func.count()).select_from(statement.subquery())) or 0)
+    items = list(
+        (
+            await db.execute(
+                statement.order_by(
+                    UrlInspectionResult.inspected_at.desc(),
+                    UrlInspectionResult.inspection_url.asc(),
+                ).limit(limit)
+            )
+        ).scalars().all()
+    )
+    return UrlInspectionResultListResponse(
+        items=[_inspection_response(item) for item in items],
+        total=total,
+    )
 
 
 @router.get("/opportunities/{site_id}", response_model=SearchOpportunityListResponse)

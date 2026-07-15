@@ -62,6 +62,17 @@ completed sync is reused for 24 hours by default. Only real (non-simulation)
 executions maintain 7/14/30/60/90-day measurement windows or influence learning.
 Redis remains an optional bounded wake-up hint, not the source of truth.
 
+Search Console URL Inspection is a separate quota-bounded durable pipeline.
+Apply migration `020`, then set `URL_INSPECTION_WORKER_ENABLED=true` on exactly
+one worker service. The operator can inspect up to
+`URL_INSPECTION_MAX_URLS_PER_JOB` same-site URLs at a time; when no URLs are
+supplied, the service prioritizes top GSC pages, recent successful crawl pages,
+and the homepage. Results are cached per URL, jobs are reused for 24 hours by
+default, and indexation blockers, missing indexation, and canonical mismatches
+reconcile into simulation-only governed draft actions. The provider returns
+Google's indexed view, not a live URL test. PostgreSQL remains authoritative and
+Redis is only a bounded wake-up hint.
+
 ### Frontend
 
 ```bash

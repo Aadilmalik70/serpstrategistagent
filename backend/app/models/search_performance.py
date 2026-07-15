@@ -103,6 +103,71 @@ class SearchSyncAttempt(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class UrlInspectionResult(Base):
+    __tablename__ = "url_inspection_results"
+    __table_args__ = (
+        UniqueConstraint("site_id", "url_hash", name="uq_url_inspection_site_url"),
+        Index("ix_url_inspection_site_verdict", "site_id", "verdict", "inspected_at"),
+        Index("ix_url_inspection_workspace_inspected", "workspace_id", "inspected_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=func.gen_random_uuid()
+    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False
+    )
+    inspection_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    url_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    verdict: Mapped[str] = mapped_column(String(64), default="VERDICT_UNSPECIFIED", nullable=False)
+    coverage_state: Mapped[str | None] = mapped_column(String(255))
+    robots_txt_state: Mapped[str | None] = mapped_column(String(64))
+    indexing_state: Mapped[str | None] = mapped_column(String(64))
+    page_fetch_state: Mapped[str | None] = mapped_column(String(64))
+    crawled_as: Mapped[str | None] = mapped_column(String(64))
+    google_canonical: Mapped[str | None] = mapped_column(String(2048))
+    user_canonical: Mapped[str | None] = mapped_column(String(2048))
+    last_crawl_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    referring_urls: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]", nullable=False)
+    sitemap_urls: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]", nullable=False)
+    raw_result: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
+    first_inspected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    inspected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class UrlInspectionAttempt(Base):
+    __tablename__ = "url_inspection_attempts"
+    __table_args__ = (
+        UniqueConstraint("job_id", "attempt_number", name="uq_url_inspection_attempt_job_number"),
+        Index("ix_url_inspection_attempts_job_id", "job_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=func.gen_random_uuid()
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("job_queue.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    worker_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="running", server_default="running", nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    result: Mapped[dict | None] = mapped_column(JSONB)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class ActionMeasurement(Base):
     __tablename__ = "action_measurements"
     __table_args__ = (

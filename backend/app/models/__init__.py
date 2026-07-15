@@ -24,6 +24,8 @@ from app.models.search_performance import (
     SearchAnalyticsMetric,
     SearchOpportunity,
     SearchSyncAttempt,
+    UrlInspectionAttempt,
+    UrlInspectionResult,
 )
 from app.models.free_audit import FreeAuditRequest
 
@@ -60,5 +62,7 @@ __all__ = [
     "SearchAnalyticsMetric",
     "SearchOpportunity",
     "SearchSyncAttempt",
+    "UrlInspectionAttempt",
+    "UrlInspectionResult",
     "FreeAuditRequest",
 ]
