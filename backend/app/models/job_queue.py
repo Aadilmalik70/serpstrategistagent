@@ -36,6 +36,14 @@ class JobQueue(Base):
                 "job_type = 'gsc_search_sync' AND status IN ('queued', 'running', 'retry_wait')"
             ),
         ),
+        Index(
+            "uq_job_queue_active_url_inspection_per_site",
+            "site_id",
+            unique=True,
+            postgresql_where=text(
+                "job_type = 'gsc_url_inspection' AND status IN ('queued', 'running', 'retry_wait')"
+            ),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

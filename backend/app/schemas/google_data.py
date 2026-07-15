@@ -60,6 +60,37 @@ class SearchSyncJobResponse(BaseModel):
     completed_at: datetime | None = None
 
 
+class UrlInspectionRequest(BaseModel):
+    urls: list[str] = Field(default_factory=list, max_length=200)
+
+
+class UrlInspectionJobResponse(SearchSyncJobResponse):
+    pass
+
+
+class UrlInspectionResultResponse(BaseModel):
+    id: uuid.UUID
+    site_id: uuid.UUID
+    inspection_url: str
+    verdict: str
+    coverage_state: str | None
+    robots_txt_state: str | None
+    indexing_state: str | None
+    page_fetch_state: str | None
+    crawled_as: str | None
+    google_canonical: str | None
+    user_canonical: str | None
+    last_crawl_time: datetime | None
+    referring_urls: list[str]
+    sitemap_urls: list[str]
+    inspected_at: datetime
+
+
+class UrlInspectionResultListResponse(BaseModel):
+    items: list[UrlInspectionResultResponse]
+    total: int
+
+
 class SearchOpportunityResponse(BaseModel):
     id: str
     site_id: str

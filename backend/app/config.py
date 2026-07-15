@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     google_oauth_token_url: str = "https://oauth2.googleapis.com/token"
     google_userinfo_url: str = "https://openidconnect.googleapis.com/v1/userinfo"
     google_search_console_api_url: str = "https://www.googleapis.com/webmasters/v3"
+    google_search_console_inspection_api_url: str = (
+        "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect"
+    )
     google_analytics_admin_api_url: str = "https://analyticsadmin.googleapis.com/v1beta"
     google_integration_timeout_seconds: float = 20.0
 
@@ -93,6 +96,17 @@ class Settings(BaseSettings):
     search_sync_min_interval_minutes: int = 1_440
     search_opportunity_action_limit: int = 100
 
+    # Durable URL Inspection queue. Keep disabled until migration 020 is applied.
+    url_inspection_worker_enabled: bool = False
+    url_inspection_worker_poll_seconds: int = 15
+    url_inspection_worker_batch_size: int = 1
+    url_inspection_job_lease_seconds: int = 180
+    url_inspection_job_max_attempts: int = 4
+    url_inspection_retry_base_seconds: int = 60
+    url_inspection_queue_key: str = "serp:gsc-url-inspection:ready"
+    url_inspection_max_urls_per_job: int = 50
+    url_inspection_min_interval_minutes: int = 1_440
+
     app_env: str = "development"
     debug: bool = True
     frontend_url: str = "http://localhost:3000"
@@ -125,6 +139,7 @@ class Settings(BaseSettings):
         "google_oauth_token_url",
         "google_userinfo_url",
         "google_search_console_api_url",
+        "google_search_console_inspection_api_url",
         "google_analytics_admin_api_url",
     )
     @classmethod
@@ -180,6 +195,13 @@ class Settings(BaseSettings):
             or self.search_sync_max_total_rows <= 0
             or self.search_sync_min_interval_minutes < 0
             or not 1 <= self.search_opportunity_action_limit <= 500
+            or self.url_inspection_worker_poll_seconds <= 0
+            or self.url_inspection_worker_batch_size <= 0
+            or self.url_inspection_job_lease_seconds <= 0
+            or self.url_inspection_job_max_attempts <= 0
+            or self.url_inspection_retry_base_seconds <= 0
+            or not 1 <= self.url_inspection_max_urls_per_job <= 200
+            or self.url_inspection_min_interval_minutes < 0
             or self.crawler_concurrency <= 0
             or self.crawler_max_response_bytes <= 0
             or self.crawler_max_redirects <= 0

@@ -16,6 +16,7 @@ from app.services.crawl_job_service import run_crawl_worker_tick
 from app.services.execution_service import run_execution_worker_tick
 from app.services.fix_planner import generate_bulk_fix_plans
 from app.services.search_performance_service import enqueue_search_sync, run_search_sync_worker_tick
+from app.services.url_inspection_service import run_url_inspection_worker_tick
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -76,6 +77,16 @@ async def scheduled_search_sync_tick() -> None:
             logger.info("Search sync worker processed %s job(s)", processed)
     except Exception:
         logger.exception("Search sync worker tick failed")
+
+
+async def scheduled_url_inspection_tick() -> None:
+    """Recover and claim a bounded batch of durable URL Inspection jobs."""
+    try:
+        processed = await run_url_inspection_worker_tick()
+        if processed:
+            logger.info("URL Inspection worker processed %s job(s)", processed)
+    except Exception:
+        logger.exception("URL Inspection worker tick failed")
 
 
 async def scheduled_search_sync_enqueue() -> None:
@@ -178,6 +189,24 @@ def start_search_sync_worker() -> None:
     if not scheduler.running:
         scheduler.start()
     logger.info("Search sync worker started with %ss polling", settings.search_sync_worker_poll_seconds)
+
+
+def start_url_inspection_worker() -> None:
+    scheduler.add_job(
+        scheduled_url_inspection_tick,
+        trigger=IntervalTrigger(seconds=settings.url_inspection_worker_poll_seconds),
+        id="url_inspection_worker_tick",
+        name="Durable Search Console URL Inspection worker",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    if not scheduler.running:
+        scheduler.start()
+    logger.info(
+        "URL Inspection worker started with %ss polling",
+        settings.url_inspection_worker_poll_seconds,
+    )
 
 
 def stop_scheduler() -> None:

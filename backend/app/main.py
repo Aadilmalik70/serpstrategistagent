@@ -32,6 +32,7 @@ from app.services.scheduler import (
     start_crawl_worker,
     start_execution_worker,
     start_search_sync_worker,
+    start_url_inspection_worker,
     start_scheduler,
     stop_scheduler,
 )
@@ -52,6 +53,8 @@ async def lifespan(app: FastAPI):
         start_crawl_worker()
     if settings.search_sync_worker_enabled:
         start_search_sync_worker()
+    if settings.url_inspection_worker_enabled:
+        start_url_inspection_worker()
 
     yield
 
@@ -60,6 +63,7 @@ async def lifespan(app: FastAPI):
         or settings.execution_worker_enabled
         or settings.crawl_worker_enabled
         or settings.search_sync_worker_enabled
+        or settings.url_inspection_worker_enabled
     ):
         stop_scheduler()
     await engine.dispose()
@@ -67,7 +71,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SERP Strategists Operator API",
-    version="0.14.0",
+    version="0.15.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
@@ -156,6 +160,7 @@ async def health():
         "execution_worker": "enabled" if settings.execution_worker_enabled else "disabled",
         "crawl_worker": "enabled" if settings.crawl_worker_enabled else "disabled",
         "search_sync_worker": "enabled" if settings.search_sync_worker_enabled else "disabled",
+        "url_inspection_worker": "enabled" if settings.url_inspection_worker_enabled else "disabled",
         "javascript_rendering": "enabled" if settings.crawler_render_enabled else "disabled",
     }
 
