@@ -28,6 +28,14 @@ class JobQueue(Base):
                 "job_type = 'crawl' AND status IN ('queued', 'running', 'retry_wait')"
             ),
         ),
+        Index(
+            "uq_job_queue_active_gsc_sync_per_site",
+            "site_id",
+            unique=True,
+            postgresql_where=text(
+                "job_type = 'gsc_search_sync' AND status IN ('queued', 'running', 'retry_wait')"
+            ),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
