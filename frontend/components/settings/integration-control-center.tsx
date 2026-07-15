@@ -510,7 +510,7 @@ export default function IntegrationControlCenter() {
               configured={Boolean(githubApp?.connected)}
               detail={
                 activeInstallations.length
-                  ? `${activeInstallations.length} App installation${activeInstallations.length === 1 ? "" : "s"} · execution disabled`
+                  ? `${activeInstallations.length} App installation${activeInstallations.length === 1 ? "" : "s"} · ${githubApp?.execution_enabled ? "draft-PR execution enabled" : "execution rollout disabled"}`
                   : githubApp?.configured
                     ? "Install the App to authorize repositories"
                     : "Configure the GitHub App on the backend"
@@ -612,7 +612,7 @@ export default function IntegrationControlCenter() {
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">Authorized repository</p>
               <h2 className="mt-2 text-3xl font-semibold tracking-[-0.045em]">Map GitHub repository</h2>
               <p className="mt-2 text-sm leading-6 text-white/65">
-                This only authorizes and maps the repository. Branch creation, commits and pull requests remain disabled.
+                Mapping authorizes this site. When the rollout gate is enabled, only explicitly approved actions with exact file plans can create reviewable draft pull requests.
               </p>
             </div>
             <form onSubmit={mapAuthorizedRepository} className="grid gap-5 p-6 sm:grid-cols-2 sm:p-8">
@@ -706,7 +706,9 @@ export default function IntegrationControlCenter() {
                       <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${repository.authorization_ready ? "bg-blue-100 text-blue-900" : "bg-amber-100 text-amber-900"}`}>
                         {repository.authorization_ready ? "App authorized" : "Public mapping"}
                       </span>
-                      <span className="rounded-full bg-[#f3f0e8] px-2.5 py-1 text-[11px] font-semibold text-[#646464]">Execution disabled</span>
+                      <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${repository.execution_ready ? "bg-emerald-100 text-emerald-900" : "bg-[#f3f0e8] text-[#646464]"}`}>
+                        {repository.execution_ready ? "Draft PR ready" : "Execution unavailable"}
+                      </span>
                     </div>
                     <p className="mt-1 text-sm text-[#646464]">{repository.repository}</p>
                     <p className="mt-2 text-xs text-[#8d8d8d]">{siteNames.get(repository.site_id) || "Site"} · {repository.visibility || "unknown visibility"} · {repository.default_branch || "default branch unknown"}</p>
@@ -735,7 +737,9 @@ export default function IntegrationControlCenter() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-semibold">GitHub App · {installation.account_login}</h3>
                       <span className="rounded-full bg-[#2b9a66] px-2.5 py-1 text-[11px] font-semibold text-white">Authorized</span>
-                      <span className="rounded-full bg-[#f3f0e8] px-2.5 py-1 text-[11px] font-semibold text-[#646464]">Execution disabled</span>
+                      <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${githubApp?.execution_enabled ? "bg-emerald-100 text-emerald-900" : "bg-[#f3f0e8] text-[#646464]"}`}>
+                        {githubApp?.execution_enabled ? "Governed draft PRs enabled" : "Execution rollout disabled"}
+                      </span>
                     </div>
                     <p className="mt-1 text-sm text-[#646464]">{installation.account_type} · {installation.repository_selection} repositories</p>
                     <p className="mt-2 text-xs text-[#8d8d8d]">Installation {installation.installation_id} · tokens are minted only when needed and never stored</p>

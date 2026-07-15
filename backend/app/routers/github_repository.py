@@ -16,6 +16,16 @@ from app.services.site_service import get_site_by_id
 router = APIRouter(prefix="/integrations/github-repository", tags=["github-repository"])
 
 
+def _execution_ready(installation: GitHubAppInstallation | None) -> bool:
+    if installation is None or not get_settings().github_execution_enabled:
+        return False
+    permissions = installation.permissions or {}
+    return (
+        permissions.get("contents") == "write"
+        and permissions.get("pull_requests") == "write"
+    )
+
+
 @router.get("/{site_id}", response_model=GitHubRepositoryResponse)
 async def github_repository_status(
     site_id: uuid.UUID,
@@ -53,7 +63,7 @@ async def github_repository_status(
         repository_id=connection.github_repository_id if connection else None,
         authorization_source="github_app" if installation else "public",
         authorization_ready=bool(installation),
-        execution_ready=False,
+        execution_ready=_execution_ready(installation),
     )
 
 
@@ -92,7 +102,11 @@ async def connect_github_repository(
             repository_id=connection.github_repository_id,
             authorization_source="github_app",
             authorization_ready=True,
-            execution_ready=False,
+            execution_ready=_execution_ready(
+                await db.get(GitHubAppInstallation, connection.installation_id)
+                if connection.installation_id
+                else None
+            ),
         )
 
     if not data.repository:

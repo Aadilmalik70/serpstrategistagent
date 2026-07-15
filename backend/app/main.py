@@ -72,7 +72,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SERP Strategists Operator API",
-    version="0.16.0",
+    version="0.17.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
@@ -160,6 +160,7 @@ async def health():
         "crawler": "first_party",
         "librecrawl": "optional" if settings.librecrawl_enabled else "disabled",
         "execution_worker": "enabled" if settings.execution_worker_enabled else "disabled",
+        "github_execution": "enabled" if settings.github_execution_enabled else "disabled",
         "crawl_worker": "enabled" if settings.crawl_worker_enabled else "disabled",
         "search_sync_worker": "enabled" if settings.search_sync_worker_enabled else "disabled",
         "url_inspection_worker": "enabled" if settings.url_inspection_worker_enabled else "disabled",

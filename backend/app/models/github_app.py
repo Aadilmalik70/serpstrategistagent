@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -110,3 +110,62 @@ class GitHubRepositoryConnection(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class GitHubExecution(Base):
+    """Durable provider record for one governed draft-PR execution."""
+
+    __tablename__ = "github_executions"
+    __table_args__ = (
+        UniqueConstraint("action_id", name="uq_github_executions_action"),
+        UniqueConstraint(
+            "repository_connection_id",
+            "branch_name",
+            name="uq_github_executions_connection_branch",
+        ),
+        Index("ix_github_executions_workspace_status", "workspace_id", "status"),
+        Index("ix_github_executions_site_created", "site_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=func.gen_random_uuid()
+    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False
+    )
+    action_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("operator_actions.id", ondelete="CASCADE"), nullable=False
+    )
+    repository_connection_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("github_repository_connections.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    repository_full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    base_branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    base_commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    branch_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    commit_sha: Mapped[str | None] = mapped_column(String(64))
+    pull_request_number: Mapped[int | None] = mapped_column(Integer)
+    pull_request_url: Mapped[str | None] = mapped_column(Text)
+    pull_request_state: Mapped[str | None] = mapped_column(String(32))
+    pull_request_draft: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), default="prepared", server_default="prepared", nullable=False
+    )
+    changed_files: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]", nullable=False)
+    validation: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
+    rollback: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rolled_back_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -31,6 +31,7 @@ from app.models.free_audit import FreeAuditRequest
 from app.models.github_app import (
     GitHubAppInstallation,
     GitHubAppInstallIntent,
+    GitHubExecution,
     GitHubRepositoryConnection,
 )
 
@@ -72,5 +73,6 @@ __all__ = [
     "FreeAuditRequest",
     "GitHubAppInstallation",
     "GitHubAppInstallIntent",
+    "GitHubExecution",
     "GitHubRepositoryConnection",
 ]

@@ -73,16 +73,26 @@ reconcile into simulation-only governed draft actions. The provider returns
 Google's indexed view, not a live URL test. PostgreSQL remains authoritative and
 Redis is only a bounded wake-up hint.
 
-GitHub private-repository access uses a GitHub App, never a workspace-supplied
-Personal Access Token. Apply migration `021`, configure the server-only
+GitHub private-repository access and governed draft-PR execution use a GitHub
+App, never a workspace-supplied Personal Access Token. Apply migrations `021`
+and `022`, configure the server-only
 `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, and `GITHUB_APP_PRIVATE_KEY_BASE64` values,
 then set the App setup URL to
 `https://<api-host>/integrations/github-app/callback`. The Settings integration
 control center can install the App, enumerate only repositories granted to that
 installation, and map one to a site. Installation access tokens are minted only
-for provider requests and are not stored or returned to the browser. This slice
-authorizes repositories only; branch creation, commits, and pull requests remain
-disabled until the governed GitHub execution slice is deployed.
+for provider requests and are not stored or returned to the browser.
+
+Real GitHub execution remains separately gated by
+`GITHUB_EXECUTION_ENABLED=false`. After migration `022` and a sandbox smoke
+test, set it to `true` only on the governed execution worker. Approved GitHub
+actions must contain an exact, size-bounded UTF-8 file plan. The worker rejects
+protected paths, snapshots the base commit and original files, creates a
+deterministic action branch and commit without force-pushing, and opens a draft
+pull request. Validation confirms the PR is open, draft, unmerged, and still
+points to the governed commit. Rollback closes the unmerged PR and deletes only
+an unchanged action branch. Autonomous merge and merged-PR rollback remain
+human-controlled.
 
 ### Frontend
 

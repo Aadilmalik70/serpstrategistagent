@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     github_app_private_key_base64: str = ""
     github_app_state_ttl_minutes: int = 10
     github_app_timeout_seconds: float = 20.0
+    # Real repository mutation is an explicit production rollout gate. The App
+    # authorization flow remains useful while this flag is disabled.
+    github_execution_enabled: bool = False
+    github_execution_branch_prefix: str = "serp-operator"
+    github_execution_max_files: int = 20
+    github_execution_max_file_bytes: int = 262_144
+    github_execution_max_total_bytes: int = 1_048_576
 
     wordpress_url: str = ""
     wordpress_user: str = ""
@@ -169,6 +176,16 @@ class Settings(BaseSettings):
             raise ValueError("GITHUB_APP_SLUG may contain only letters, numbers, and hyphens")
         return normalized
 
+    @field_validator("github_execution_branch_prefix")
+    @classmethod
+    def normalize_github_execution_branch_prefix(cls, value: str) -> str:
+        normalized = value.strip().strip("/")
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", normalized):
+            raise ValueError(
+                "GITHUB_EXECUTION_BRANCH_PREFIX may contain only letters, numbers, dots, underscores, and hyphens"
+            )
+        return normalized
+
     @model_validator(mode="after")
     def validate_secure_environment(self) -> "Settings":
         if self.app_env.lower() in {"staging", "production"}:
@@ -200,6 +217,10 @@ class Settings(BaseSettings):
             or self.crawler_render_timeout_seconds <= 0
         ):
             raise ValueError("Provider and crawler timeouts must be greater than zero")
+        if self.github_execution_enabled and not all(github_app_values):
+            raise ValueError(
+                "GitHub execution requires GITHUB_APP_ID, GITHUB_APP_SLUG, and GITHUB_APP_PRIVATE_KEY_BASE64"
+            )
         if (
             self.execution_worker_poll_seconds <= 0
             or self.execution_worker_batch_size <= 0
@@ -239,6 +260,10 @@ class Settings(BaseSettings):
             or self.crawler_device_compare_max_pages < 0
             or self.crawler_adaptive_max_delay_seconds <= 0
             or self.crawler_request_delay_ms < 0
+            or not 1 <= self.github_execution_max_files <= 100
+            or not 1_024 <= self.github_execution_max_file_bytes <= 2_000_000
+            or self.github_execution_max_total_bytes < self.github_execution_max_file_bytes
+            or self.github_execution_max_total_bytes > 10_000_000
         ):
             raise ValueError("Execution worker and crawler limits must be valid positive values")
         if self.stripe_secret_key and not self.stripe_secret_key.startswith(("sk_test_", "sk_live_")):

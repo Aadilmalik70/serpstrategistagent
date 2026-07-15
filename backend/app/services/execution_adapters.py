@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models.operator_action import OperatorAction
 
 
@@ -46,10 +48,31 @@ class ExecutionAdapter(Protocol):
     available: bool
     mutation_enabled: bool
 
-    async def capture(self, action: OperatorAction, *, phase: str) -> AdapterSnapshot:
+    async def preflight(
+        self,
+        action: OperatorAction,
+        *,
+        db: AsyncSession,
+        operation: str,
+    ) -> None:
         ...
 
-    async def apply(self, action: OperatorAction, *, before: AdapterSnapshot) -> AdapterResult:
+    async def capture(
+        self,
+        action: OperatorAction,
+        *,
+        phase: str,
+        db: AsyncSession,
+    ) -> AdapterSnapshot:
+        ...
+
+    async def apply(
+        self,
+        action: OperatorAction,
+        *,
+        before: AdapterSnapshot,
+        db: AsyncSession,
+    ) -> AdapterResult:
         ...
 
     async def validate(
@@ -58,6 +81,7 @@ class ExecutionAdapter(Protocol):
         *,
         before: AdapterSnapshot,
         execution_result: dict[str, Any],
+        db: AsyncSession,
     ) -> ValidationResult:
         ...
 
@@ -66,6 +90,7 @@ class ExecutionAdapter(Protocol):
         action: OperatorAction,
         *,
         before: AdapterSnapshot,
+        db: AsyncSession,
     ) -> AdapterResult:
         ...
 
@@ -77,7 +102,23 @@ class SimulationExecutionAdapter:
     available = True
     mutation_enabled = False
 
-    async def capture(self, action: OperatorAction, *, phase: str) -> AdapterSnapshot:
+    async def preflight(
+        self,
+        action: OperatorAction,
+        *,
+        db: AsyncSession,
+        operation: str,
+    ) -> None:
+        del action, db, operation
+
+    async def capture(
+        self,
+        action: OperatorAction,
+        *,
+        phase: str,
+        db: AsyncSession,
+    ) -> AdapterSnapshot:
+        del db
         return AdapterSnapshot(
             data={
                 "phase": phase,
@@ -90,7 +131,14 @@ class SimulationExecutionAdapter:
             external_revision=f"simulation:{action.id}:{action.version}:{phase}",
         )
 
-    async def apply(self, action: OperatorAction, *, before: AdapterSnapshot) -> AdapterResult:
+    async def apply(
+        self,
+        action: OperatorAction,
+        *,
+        before: AdapterSnapshot,
+        db: AsyncSession,
+    ) -> AdapterResult:
+        del db
         return AdapterResult(
             result={
                 "mode": "simulation",
@@ -109,8 +157,9 @@ class SimulationExecutionAdapter:
         *,
         before: AdapterSnapshot,
         execution_result: dict[str, Any],
+        db: AsyncSession,
     ) -> ValidationResult:
-        del before
+        del before, db
         checks: list[dict[str, Any]] = []
         for item in action.validation_checklist or []:
             label = item if isinstance(item, str) else str(item.get("label") or item.get("check") or "Validation check")
@@ -129,7 +178,9 @@ class SimulationExecutionAdapter:
         action: OperatorAction,
         *,
         before: AdapterSnapshot,
+        db: AsyncSession,
     ) -> AdapterResult:
+        del db
         return AdapterResult(
             result={
                 "mode": "simulation",
@@ -152,12 +203,34 @@ class DisabledExecutionAdapter:
             f"The {self.name} execution adapter is installed as a contract only and is not enabled for mutations."
         )
 
-    async def capture(self, action: OperatorAction, *, phase: str) -> AdapterSnapshot:
-        del action, phase
+    async def preflight(
+        self,
+        action: OperatorAction,
+        *,
+        db: AsyncSession,
+        operation: str,
+    ) -> None:
+        del action, db, operation
         self._raise()
 
-    async def apply(self, action: OperatorAction, *, before: AdapterSnapshot) -> AdapterResult:
-        del action, before
+    async def capture(
+        self,
+        action: OperatorAction,
+        *,
+        phase: str,
+        db: AsyncSession,
+    ) -> AdapterSnapshot:
+        del action, phase, db
+        self._raise()
+
+    async def apply(
+        self,
+        action: OperatorAction,
+        *,
+        before: AdapterSnapshot,
+        db: AsyncSession,
+    ) -> AdapterResult:
+        del action, before, db
         self._raise()
 
     async def validate(
@@ -166,8 +239,9 @@ class DisabledExecutionAdapter:
         *,
         before: AdapterSnapshot,
         execution_result: dict[str, Any],
+        db: AsyncSession,
     ) -> ValidationResult:
-        del action, before, execution_result
+        del action, before, execution_result, db
         self._raise()
 
     async def rollback(
@@ -175,8 +249,9 @@ class DisabledExecutionAdapter:
         action: OperatorAction,
         *,
         before: AdapterSnapshot,
+        db: AsyncSession,
     ) -> AdapterResult:
-        del action, before
+        del action, before, db
         self._raise()
 
 
@@ -184,7 +259,16 @@ def get_execution_adapter(name: str) -> ExecutionAdapter:
     normalized = (name or "").strip().lower()
     if normalized == "simulation":
         return SimulationExecutionAdapter()
-    if normalized in {"github", "wordpress"}:
+    if normalized == "github":
+        from app.config import get_settings
+        from app.services.github_execution_service import GitHubExecutionAdapter
+
+        if get_settings().github_execution_enabled:
+            return GitHubExecutionAdapter()
+        raise ExecutionAdapterUnavailable(
+            "The GitHub execution adapter is authorized but not enabled for mutations in this environment."
+        )
+    if normalized == "wordpress":
         raise ExecutionAdapterUnavailable(
             f"The {normalized} execution adapter is installed as a contract only and is not enabled for mutations."
         )
