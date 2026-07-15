@@ -1,7 +1,7 @@
 from app.models.site import Site
 from app.models.page import Page
 from app.models.crawl_snapshot import CrawlSnapshot
-from app.models.job_queue import JobQueue
+from app.models.job_queue import CrawlAttempt, CrawlFrontier, JobQueue
 from app.models.agent_run import AgentRun
 from app.models.issue import Issue, TechnicalFinding
 from app.models.operator_action import OperatorAction, OperatorActionEvent
@@ -26,6 +26,8 @@ __all__ = [
     "Page",
     "CrawlSnapshot",
     "JobQueue",
+    "CrawlAttempt",
+    "CrawlFrontier",
     "AgentRun",
     "Issue",
     "TechnicalFinding",

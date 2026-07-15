@@ -63,6 +63,15 @@ class Settings(BaseSettings):
     crawler_max_redirects: int = 5
     crawler_sitemap_limit: int = 10
 
+    # Durable crawl queue. PostgreSQL is authoritative; Redis only reduces wake-up latency.
+    crawl_worker_enabled: bool = False
+    crawl_worker_poll_seconds: int = 3
+    crawl_worker_batch_size: int = 2
+    crawl_job_lease_seconds: int = 120
+    crawl_job_max_attempts: int = 3
+    crawl_retry_base_seconds: int = 5
+    crawl_queue_key: str = "serp:crawl:ready"
+
     app_env: str = "development"
     debug: bool = True
     frontend_url: str = "http://localhost:3000"
@@ -131,6 +140,11 @@ class Settings(BaseSettings):
             or self.execution_job_lease_seconds <= 0
             or self.execution_job_max_attempts <= 0
             or self.execution_retry_base_seconds <= 0
+            or self.crawl_worker_poll_seconds <= 0
+            or self.crawl_worker_batch_size <= 0
+            or self.crawl_job_lease_seconds <= 0
+            or self.crawl_job_max_attempts <= 0
+            or self.crawl_retry_base_seconds <= 0
             or self.crawler_concurrency <= 0
             or self.crawler_max_response_bytes <= 0
             or self.crawler_max_redirects <= 0

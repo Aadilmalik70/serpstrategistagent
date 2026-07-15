@@ -41,6 +41,7 @@ services:
       OAUTH_BRIDGE_SECRET: local-oauth-bridge-secret-change-before-deploy
       CREDENTIAL_ENCRYPTION_KEY: local-credential-encryption-key-change-before-deploy
       SCHEDULER_ENABLED: "false"
+      CRAWL_WORKER_ENABLED: "true"
     command: >-
       sh -c "alembic upgrade head &&
       uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"

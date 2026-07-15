@@ -1,22 +1,25 @@
-from datetime import datetime, timezone
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import async_session_factory, get_db
+from app.database import get_db
 from app.dependencies.workspace import WorkspaceContext, get_current_workspace, require_workspace_role
 from app.models.crawl_snapshot import CrawlSnapshot
 from app.models.job_queue import JobQueue
 from app.models.site import Site
-from app.services.crawler import run_crawl
-from app.services.entitlement_service import assert_usage_quota, effective_entitlements, record_usage
+from app.services.crawl_job_service import (
+    ACTIVE_CRAWL_STATUSES,
+    CrawlJobServiceError,
+    enqueue_crawl_job,
+    request_crawl_cancellation,
+    resume_crawl_job,
+)
 from app.services.site_service import get_site_by_id
 
 router = APIRouter(prefix="/crawl", tags=["crawl"])
-ACTIVE_CRAWL_STATUSES = {"queued", "running"}
 
 
 class CrawlRequest(BaseModel):
@@ -45,86 +48,6 @@ def _snapshot_error(snapshot: CrawlSnapshot | None) -> str | None:
     return None
 
 
-async def run_crawl_job(
-    workspace_id: uuid.UUID,
-    site_id: uuid.UUID,
-    domain: str,
-    max_pages: int,
-    job_id: uuid.UUID,
-) -> None:
-    """Run one persisted first-party crawl job and record every terminal state."""
-    try:
-        async with async_session_factory() as db:
-            job = await db.get(JobQueue, job_id)
-            site = await db.get(Site, site_id)
-            if not job or not site or site.workspace_id != workspace_id:
-                return
-            job.status = "running"
-            job.started_at = datetime.now(timezone.utc)
-            site.status = "crawling"
-            await db.commit()
-
-        async with async_session_factory() as db:
-            snapshot = await run_crawl(
-                db,
-                site_id,
-                domain,
-                max_pages=max_pages,
-                job_id=job_id,
-            )
-            pages_crawled = int(snapshot.pages_crawled or 0)
-            job = await db.get(JobQueue, job_id)
-            site = await db.get(Site, site_id)
-            if not job or not site:
-                return
-
-            crawl_error = _snapshot_error(snapshot)
-            result = {
-                "adapter": "first_party",
-                "snapshot_id": str(snapshot.id),
-                "pages_discovered": int(snapshot.pages_discovered or 0),
-                "pages_crawled": pages_crawled,
-                "errors": int(snapshot.errors or 0),
-                "error": crawl_error,
-                "details": snapshot.extracted_data or {},
-            }
-            job.result = result
-            job.completed_at = datetime.now(timezone.utc)
-
-            if snapshot.status == "completed" and pages_crawled > 0:
-                job.status = "completed"
-                site.status = "ready"
-                await record_usage(
-                    db,
-                    workspace_id=workspace_id,
-                    site_id=site_id,
-                    metric="monthly_crawl_pages",
-                    quantity=pages_crawled,
-                    purpose="site_crawl",
-                    details={"adapter": "first_party", "snapshot_id": str(snapshot.id)},
-                    commit=False,
-                )
-            else:
-                job.status = "failed"
-                site.status = "crawl_failed"
-            await db.commit()
-    except Exception as exc:
-        async with async_session_factory() as db:
-            job = await db.get(JobQueue, job_id)
-            site = await db.get(Site, site_id)
-            if job:
-                job.status = "failed"
-                job.completed_at = datetime.now(timezone.utc)
-                job.result = {
-                    "adapter": "first_party",
-                    "error_type": type(exc).__name__,
-                    "error": str(exc)[:1000],
-                }
-            if site:
-                site.status = "crawl_failed"
-            await db.commit()
-
-
 async def _crawl_status_payload(db: AsyncSession, job: JobQueue) -> dict:
     snapshot: CrawlSnapshot | None = None
     snapshot_id = (job.payload or {}).get("snapshot_id")
@@ -150,12 +73,17 @@ async def _crawl_status_payload(db: AsyncSession, job: JobQueue) -> dict:
     return {
         "job_id": str(job.id),
         "site_id": str(job.site_id),
-        "status": job.status if job.status in {"completed", "failed", "cancelled"} else (snapshot.status if snapshot else job.status),
+        "status": job.status,
         "adapter": result.get("adapter") or (job.payload or {}).get("adapter") or "first_party",
         "pages_discovered": int(snapshot.pages_discovered or 0) if snapshot else int(result.get("pages_discovered") or 0),
         "pages_crawled": int(snapshot.pages_crawled or 0) if snapshot else int(result.get("pages_crawled") or 0),
         "errors": int(snapshot.errors or 0) if snapshot else int(result.get("errors") or 0),
-        "error": result.get("error") or _snapshot_error(snapshot),
+        "error": job.error_message or result.get("error") or _snapshot_error(snapshot),
+        "attempt_count": job.attempt_count,
+        "max_attempts": job.max_attempts,
+        "cancellation_requested": job.cancellation_requested,
+        "lease_expires_at": job.lease_expires_at,
+        "heartbeat_at": job.heartbeat_at,
         "started_at": job.started_at,
         "completed_at": job.completed_at,
         "details": (snapshot.extracted_data or {}) if snapshot else result.get("details", {}),
@@ -165,7 +93,6 @@ async def _crawl_status_payload(db: AsyncSession, job: JobQueue) -> dict:
 @router.post("/site", response_model=CrawlResponse, status_code=202)
 async def start_crawl(
     data: CrawlRequest,
-    background_tasks: BackgroundTasks,
     context: WorkspaceContext = Depends(get_current_workspace),
     db: AsyncSession = Depends(get_db),
 ) -> CrawlResponse:
@@ -186,43 +113,16 @@ async def start_crawl(
     if active:
         return CrawlResponse(job_id=str(active.id), status=active.status, reused=True)
 
-    subscription, _, current = await assert_usage_quota(
+    requested_max = data.max_pages or 100
+
+    job, reused = await enqueue_crawl_job(
         db,
         workspace_id=context.workspace.id,
-        metric="monthly_crawl_pages",
-        requested=1,
+        site=site,
+        max_pages=requested_max,
+        source="manual",
     )
-    limit = int(effective_entitlements(subscription)["monthly_crawl_pages"])
-    remaining = max(0, limit - current)
-    requested_max = data.max_pages or 100
-    max_pages = min(requested_max, remaining)
-    if max_pages < 1:
-        raise HTTPException(status_code=402, detail="No crawl-page capacity remains in this billing period")
-
-    job = JobQueue(
-        site_id=site.id,
-        job_type="crawl",
-        status="queued",
-        payload={
-            "adapter": "first_party",
-            "max_pages": max_pages,
-            "workspace_id": str(context.workspace.id),
-        },
-    )
-    db.add(job)
-    site.status = "crawl_queued"
-    await db.commit()
-    await db.refresh(job)
-
-    background_tasks.add_task(
-        run_crawl_job,
-        context.workspace.id,
-        site.id,
-        site.domain,
-        max_pages,
-        job.id,
-    )
-    return CrawlResponse(job_id=str(job.id), status="queued")
+    return CrawlResponse(job_id=str(job.id), status=job.status, reused=reused)
 
 
 @router.get("/site/{site_id}/latest")
@@ -261,9 +161,49 @@ async def get_crawl_status(
         await db.execute(
             select(JobQueue)
             .join(Site, Site.id == JobQueue.site_id)
-            .where(JobQueue.id == job_id, Site.workspace_id == context.workspace.id)
+            .where(
+                JobQueue.id == job_id,
+                JobQueue.job_type == "crawl",
+                Site.workspace_id == context.workspace.id,
+            )
         )
     ).scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    return await _crawl_status_payload(db, job)
+
+
+@router.post("/{job_id}/cancel")
+async def cancel_crawl(
+    job_id: uuid.UUID,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+):
+    require_workspace_role(context, "owner", "admin")
+    try:
+        job = await request_crawl_cancellation(
+            db,
+            workspace_id=context.workspace.id,
+            job_id=job_id,
+        )
+    except CrawlJobServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return await _crawl_status_payload(db, job)
+
+
+@router.post("/{job_id}/resume", status_code=202)
+async def resume_crawl(
+    job_id: uuid.UUID,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+):
+    require_workspace_role(context, "owner", "admin")
+    try:
+        job = await resume_crawl_job(
+            db,
+            workspace_id=context.workspace.id,
+            job_id=job_id,
+        )
+    except CrawlJobServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return await _crawl_status_payload(db, job)

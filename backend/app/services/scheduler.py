@@ -11,6 +11,7 @@ from app.database import async_session_factory
 from app.models.agent_run import AgentRun
 from app.models.site import Site
 from app.services.agent_graph import run_agent_graph
+from app.services.crawl_job_service import run_crawl_worker_tick
 from app.services.execution_service import run_execution_worker_tick
 from app.services.fix_planner import generate_bulk_fix_plans
 
@@ -55,6 +56,16 @@ async def scheduled_execution_tick() -> None:
         logger.exception("Execution worker tick failed")
 
 
+async def scheduled_crawl_tick() -> None:
+    """Recover and claim a bounded batch of durable crawl jobs."""
+    try:
+        processed = await run_crawl_worker_tick()
+        if processed:
+            logger.info("Crawl worker processed %s job(s)", processed)
+    except Exception:
+        logger.exception("Crawl worker tick failed")
+
+
 def start_scheduler() -> None:
     scheduler.add_job(
         scheduled_agent_run,
@@ -82,6 +93,21 @@ def start_execution_worker() -> None:
     if not scheduler.running:
         scheduler.start()
     logger.info("Execution worker started with %ss polling", settings.execution_worker_poll_seconds)
+
+
+def start_crawl_worker() -> None:
+    scheduler.add_job(
+        scheduled_crawl_tick,
+        trigger=IntervalTrigger(seconds=settings.crawl_worker_poll_seconds),
+        id="crawl_worker_tick",
+        name="Durable first-party crawl worker",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    if not scheduler.running:
+        scheduler.start()
+    logger.info("Crawl worker started with %ss polling", settings.crawl_worker_poll_seconds)
 
 
 def stop_scheduler() -> None:

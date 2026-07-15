@@ -8,9 +8,11 @@ from sqlalchemy import func, select
 from app.database import async_session_factory
 from app.main import app
 from app.models.agent_run import AgentRun
+from app.models.job_queue import JobQueue
 from app.models.page import Page
-from app.routers import agent as agent_router
 from app.services import first_party_crawler as crawler
+from app.services import crawl_job_service
+from app.services.crawl_job_service import run_crawl_worker_tick
 from app.services.first_party_crawler import CrawlError, FetchResult
 
 
@@ -79,7 +81,12 @@ def test_agent_crawls_before_analysis_when_site_has_no_pages(monkeypatch) -> Non
             )
         raise AssertionError(f"Unexpected URL: {url}")
 
-    async def fake_agent_graph(site_id: uuid.UUID, run_id: uuid.UUID):
+    async def fake_agent_graph(
+        site_id: uuid.UUID,
+        run_id: uuid.UUID,
+        **kwargs,
+    ):
+        del kwargs
         async with async_session_factory() as db:
             pages = int(
                 await db.scalar(select(func.count(Page.id)).where(Page.site_id == site_id)) or 0
@@ -95,7 +102,7 @@ def test_agent_crawls_before_analysis_when_site_has_no_pages(monkeypatch) -> Non
             await db.commit()
 
     monkeypatch.setattr(crawler, "_fetch_url", fake_fetch)
-    monkeypatch.setattr(agent_router, "run_agent_graph", fake_agent_graph)
+    monkeypatch.setattr(crawl_job_service, "run_agent_graph", fake_agent_graph)
 
     with TestClient(app) as client:
         owner = _register(client, f"agent-crawl-{suffix}@example.com", "Agent Crawl")
@@ -108,6 +115,10 @@ def test_agent_crawls_before_analysis_when_site_has_no_pages(monkeypatch) -> Non
         )
         assert started.status_code == 202, started.text
         run_id = started.json()["run_id"]
+        queued_run = client.get(f"/agent/run/{run_id}", headers=_headers(owner))
+        crawl_job_id = uuid.UUID(str(queued_run.json()["meta"]["crawl_job_id"]))
+        assert client.portal is not None
+        client.portal.call(run_crawl_worker_tick, crawl_job_id)
 
         run = client.get(f"/agent/run/{run_id}", headers=_headers(owner))
         assert run.status_code == 200, run.text
@@ -119,6 +130,25 @@ def test_agent_crawls_before_analysis_when_site_has_no_pages(monkeypatch) -> Non
         pages = client.get(f"/sites/{site_id}/pages", headers=_headers(owner))
         assert pages.status_code == 200
         assert pages.json()["total"] == 1
+
+        repeated = client.post(
+            "/agent/run",
+            headers=_headers(owner),
+            json={"site_id": site_id},
+        )
+        assert repeated.status_code == 202, repeated.text
+        repeated_run = client.get(
+            f"/agent/run/{repeated.json()['run_id']}",
+            headers=_headers(owner),
+        )
+        repeated_job_id = uuid.UUID(str(repeated_run.json()["meta"]["crawl_job_id"]))
+        assert repeated_job_id != crawl_job_id
+        client.portal.call(run_crawl_worker_tick, repeated_job_id)
+        repeated_done = client.get(
+            f"/agent/run/{repeated.json()['run_id']}",
+            headers=_headers(owner),
+        )
+        assert repeated_done.json()["status"] == "completed"
 
 
 def test_agent_fails_with_crawl_error_instead_of_zero_page_completion(monkeypatch) -> None:
@@ -141,6 +171,21 @@ def test_agent_fails_with_crawl_error_instead_of_zero_page_completion(monkeypatc
             json={"site_id": site_id},
         )
         assert started.status_code == 202, started.text
+
+        async def exhaust_retry_budget() -> uuid.UUID:
+            async with async_session_factory() as db:
+                run = await db.get(AgentRun, uuid.UUID(started.json()["run_id"]))
+                assert run is not None
+                job_id = uuid.UUID(str((run.meta or {})["crawl_job_id"]))
+                job = await db.get(JobQueue, job_id)
+                assert job is not None
+                job.max_attempts = 1
+                await db.commit()
+                return job_id
+
+        assert client.portal is not None
+        crawl_job_id = client.portal.call(exhaust_retry_budget)
+        client.portal.call(run_crawl_worker_tick, crawl_job_id)
 
         run = client.get(
             f"/agent/run/{started.json()['run_id']}",

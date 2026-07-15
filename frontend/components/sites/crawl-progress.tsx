@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { apiFetch } from "@/lib/api";
 
 interface CrawlProgressProps {
   jobId: string;
@@ -20,25 +20,32 @@ export default function CrawlProgress({ jobId, onComplete }: CrawlProgressProps)
   const [status, setStatus] = useState<CrawlStatus | null>(null);
 
   useEffect(() => {
-    const interval = setInterval(async () => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    async function poll() {
       try {
-        const res = await fetch(`${API_URL}/crawl/${jobId}`);
-        if (res.ok) {
-          const data = await res.json();
-          setStatus(data);
-          if (data.status === "completed" || data.status === "failed") {
-            clearInterval(interval);
-            if (data.status === "completed") {
-              setTimeout(onComplete, 1000);
-            }
+        const data = await apiFetch<CrawlStatus>(`/crawl/${jobId}`);
+        if (stopped) return;
+        setStatus(data);
+        if (["completed", "failed", "cancelled"].includes(data.status)) {
+          if (data.status === "completed") {
+            timer = setTimeout(onComplete, 1000);
           }
+          return;
         }
       } catch {
         // Silently retry on network errors
       }
-    }, 2000);
+      if (!stopped) timer = setTimeout(() => void poll(), 2000);
+    }
 
-    return () => clearInterval(interval);
+    void poll();
+
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [jobId, onComplete]);
 
   const progress = status
@@ -81,6 +88,11 @@ export default function CrawlProgress({ jobId, onComplete }: CrawlProgressProps)
       {status?.status === "failed" && (
         <p className="text-sm text-red-600">
           Crawl failed. Please try again from the site detail page.
+        </p>
+      )}
+      {status?.status === "cancelled" && (
+        <p className="text-sm text-gray-600">
+          Crawl cancelled. Resume it from the site detail page to continue from the saved frontier.
         </p>
       )}
     </div>

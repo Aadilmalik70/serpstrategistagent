@@ -28,7 +28,12 @@ from app.routers import (
     workspaces,
 )
 from app.services.entitlement_service import QuotaExceededError
-from app.services.scheduler import start_execution_worker, start_scheduler, stop_scheduler
+from app.services.scheduler import (
+    start_crawl_worker,
+    start_execution_worker,
+    start_scheduler,
+    stop_scheduler,
+)
 
 settings = get_settings()
 
@@ -39,17 +44,19 @@ async def lifespan(app: FastAPI):
         start_scheduler()
     if settings.execution_worker_enabled:
         start_execution_worker()
+    if settings.crawl_worker_enabled:
+        start_crawl_worker()
 
     yield
 
-    if settings.scheduler_enabled or settings.execution_worker_enabled:
+    if settings.scheduler_enabled or settings.execution_worker_enabled or settings.crawl_worker_enabled:
         stop_scheduler()
     await engine.dispose()
 
 
 app = FastAPI(
     title="SERP Strategists Operator API",
-    version="0.11.1",
+    version="0.12.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
@@ -136,6 +143,7 @@ async def health():
         "crawler": "first_party",
         "librecrawl": "optional" if settings.librecrawl_enabled else "disabled",
         "execution_worker": "enabled" if settings.execution_worker_enabled else "disabled",
+        "crawl_worker": "enabled" if settings.crawl_worker_enabled else "disabled",
     }
 
 

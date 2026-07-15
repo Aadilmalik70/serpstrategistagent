@@ -14,18 +14,18 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
-from typing import Any
+from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 from xml.etree import ElementTree
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.crawl_snapshot import CrawlSnapshot
-from app.models.job_queue import JobQueue
+from app.models.job_queue import CrawlFrontier, JobQueue
 from app.models.page import Page
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,14 @@ REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
 class CrawlError(RuntimeError):
+    pass
+
+
+class CrawlCancelled(CrawlError):
+    pass
+
+
+class CrawlLeaseLost(CrawlError):
     pass
 
 
@@ -176,7 +184,7 @@ class PageHtmlParser(HTMLParser):
         return len(re.findall(r"\b[\w'-]+\b", " ".join(self.visible_text)))
 
 
-async def _resolve_public_host(hostname: str, port: int) -> None:
+async def _resolve_public_host(hostname: str, port: int) -> str:
     try:
         results = await asyncio.to_thread(
             socket.getaddrinfo,
@@ -190,21 +198,44 @@ async def _resolve_public_host(hostname: str, port: int) -> None:
     addresses = {item[4][0] for item in results}
     if not addresses:
         raise CrawlError("Website hostname could not be resolved")
+    normalized: list[str] = []
     for address in addresses:
-        if not ipaddress.ip_address(address).is_global:
+        parsed_address = ipaddress.ip_address(address)
+        if not parsed_address.is_global:
             raise CrawlError("Private or reserved network targets are not allowed")
+        normalized.append(parsed_address.compressed)
+    return sorted(normalized)[0]
 
 
-async def _validate_public_target(url: str) -> None:
+async def _validate_public_target(url: str) -> str:
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise CrawlError("Crawler target is not a valid HTTP or HTTPS URL")
     if parsed.username or parsed.password:
         raise CrawlError("Crawler target cannot contain embedded credentials")
-    await _resolve_public_host(
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if port not in {80, 443}:
+        raise CrawlError("Crawler targets must use port 80 or 443")
+    return await _resolve_public_host(
         parsed.hostname,
-        parsed.port or (443 if parsed.scheme == "https" else 80),
+        port,
     )
+
+
+def _pinned_target_url(url: str, address: str) -> tuple[str, str, str]:
+    parsed = urlsplit(url)
+    if not parsed.hostname:
+        raise CrawlError("Crawler target hostname is missing")
+    host = f"[{address}]" if ":" in address else address
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    is_default_port = (parsed.scheme == "https" and port == 443) or (
+        parsed.scheme == "http" and port == 80
+    )
+    netloc = host if is_default_port else f"{host}:{port}"
+    original_host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    host_header = original_host if is_default_port else f"{original_host}:{port}"
+    pinned = urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, ""))
+    return pinned, parsed.hostname, host_header
 
 
 def _normalize_domain(domain: str) -> str:
@@ -285,8 +316,14 @@ async def _fetch_url(
     redirects: list[str] = []
     started = time.perf_counter()
     for _ in range(max_redirects + 1):
-        await _validate_public_target(current)
-        async with client.stream("GET", current) as response:
+        address = await _validate_public_target(current)
+        pinned_url, hostname, host_header = _pinned_target_url(current, address)
+        async with client.stream(
+            "GET",
+            pinned_url,
+            headers={"Host": host_header},
+            extensions={"sni_hostname": hostname},
+        ) as response:
             if response.status_code in REDIRECT_STATUSES:
                 location = response.headers.get("location")
                 if not location:
@@ -312,7 +349,7 @@ async def _fetch_url(
             elapsed = int((time.perf_counter() - started) * 1000)
             return FetchResult(
                 requested_url=url,
-                final_url=str(response.url),
+                final_url=current,
                 status_code=response.status_code,
                 headers={key.lower(): value for key, value in response.headers.items()},
                 body=bytes(body),
@@ -400,6 +437,7 @@ async def _discover_sitemap_urls(
     site_host: str,
     robots: RobotsState,
     max_urls: int,
+    control: Callable[[], Awaitable[bool]] | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
     settings = get_settings()
     pending = deque(robots.sitemaps or [urljoin(base_url, "/sitemap.xml")])
@@ -408,6 +446,8 @@ async def _discover_sitemap_urls(
     errors: list[str] = []
 
     while pending and len(seen_sitemaps) < settings.crawler_sitemap_limit and len(page_urls) < max_urls:
+        if control and await control():
+            raise CrawlCancelled("Crawl cancellation requested")
         sitemap_url = pending.popleft()
         normalized_sitemap = _normalize_url(sitemap_url, base_url, site_host)
         if not normalized_sitemap or normalized_sitemap in seen_sitemaps:
@@ -485,6 +525,179 @@ async def _upsert_page(
     return page
 
 
+def _frontier_hash(url: str) -> str:
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()
+
+
+async def _add_frontier_urls(
+    db: AsyncSession,
+    *,
+    job_id: uuid.UUID,
+    urls: list[tuple[str, str | None]],
+    max_urls: int,
+) -> int:
+    unique: dict[str, tuple[str, str | None]] = {}
+    for url, discovered_from in urls:
+        unique.setdefault(_frontier_hash(url), (url, discovered_from))
+    if not unique:
+        return 0
+
+    existing_rows: list[CrawlFrontier] = []
+    hashes = list(unique)
+    # Stay comfortably below PostgreSQL/asyncpg bind limits for large sitemaps.
+    for offset in range(0, len(hashes), 5_000):
+        existing_rows.extend(
+            list(
+                (
+                    await db.execute(
+                        select(CrawlFrontier).where(
+                            CrawlFrontier.job_id == job_id,
+                            CrawlFrontier.url_hash.in_(hashes[offset : offset + 5_000]),
+                        )
+                    )
+                ).scalars().all()
+            )
+        )
+    existing = {row.url_hash: row.url for row in existing_rows}
+    for url_hash, (url, _) in unique.items():
+        if url_hash in existing and existing[url_hash] != url:
+            raise CrawlError("Crawler frontier URL hash collision")
+
+    total = int(
+        await db.scalar(
+            select(func.count(CrawlFrontier.id)).where(CrawlFrontier.job_id == job_id)
+        )
+        or 0
+    )
+    remaining = max(0, max_urls - total)
+    added = 0
+    for url_hash, (url, discovered_from) in unique.items():
+        if url_hash in existing or added >= remaining:
+            continue
+        db.add(
+            CrawlFrontier(
+                job_id=job_id,
+                url=url,
+                url_hash=url_hash,
+                status="queued",
+                discovered_from=discovered_from,
+            )
+        )
+        added += 1
+        if added % 1_000 == 0:
+            await db.flush()
+    if added:
+        await db.flush()
+    return added
+
+
+async def _next_frontier_batch(
+    db: AsyncSession,
+    *,
+    job_id: uuid.UUID,
+    limit: int,
+) -> list[CrawlFrontier]:
+    rows = list(
+        (
+            await db.execute(
+                select(CrawlFrontier)
+                .where(CrawlFrontier.job_id == job_id, CrawlFrontier.status == "queued")
+                .order_by(CrawlFrontier.created_at.asc(), CrawlFrontier.id.asc())
+                .with_for_update(skip_locked=True)
+                .limit(limit)
+            )
+        ).scalars().all()
+    )
+    for row in rows:
+        row.status = "fetching"
+        row.attempt_count += 1
+    if rows:
+        await db.commit()
+    return rows
+
+
+async def _frontier_counts(db: AsyncSession, job_id: uuid.UUID) -> dict[str, int]:
+    rows = (
+        await db.execute(
+            select(CrawlFrontier.status, func.count(CrawlFrontier.id))
+            .where(CrawlFrontier.job_id == job_id)
+            .group_by(CrawlFrontier.status)
+        )
+    ).all()
+    counts = {str(status): int(count) for status, count in rows}
+    counts["total"] = sum(counts.values())
+    return counts
+
+
+async def _pages_crawled_for_snapshot(db: AsyncSession, snapshot: CrawlSnapshot) -> int:
+    return int(
+        await db.scalar(
+            select(func.count(Page.id)).where(
+                Page.site_id == snapshot.site_id,
+                Page.last_crawled_at.is_not(None),
+                Page.last_crawled_at >= snapshot.started_at,
+            )
+        )
+        or 0
+    )
+
+
+async def _rebuild_linked_from(db: AsyncSession, site_id: uuid.UUID) -> None:
+    pages = list(
+        (await db.execute(select(Page).where(Page.site_id == site_id))).scalars().all()
+    )
+    inlinks: dict[str, set[str]] = defaultdict(set)
+    for page in pages:
+        links = (page.meta or {}).get("internal_links", [])
+        if not isinstance(links, list):
+            continue
+        for target in links:
+            if isinstance(target, str):
+                inlinks[target].add(page.path)
+    for page in pages:
+        page.meta = {**(page.meta or {}), "linked_from": sorted(inlinks.get(page.path, set()))[:500]}
+
+
+async def _crawl_snapshot_for_job(
+    db: AsyncSession,
+    *,
+    site_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> CrawlSnapshot:
+    job = await db.get(JobQueue, job_id)
+    if not job:
+        raise CrawlError("Crawl job no longer exists")
+    snapshot: CrawlSnapshot | None = None
+    raw_snapshot_id = (job.payload or {}).get("snapshot_id")
+    if raw_snapshot_id:
+        try:
+            snapshot = await db.get(CrawlSnapshot, uuid.UUID(str(raw_snapshot_id)))
+        except (TypeError, ValueError):
+            snapshot = None
+    if snapshot is not None and snapshot.site_id != site_id:
+        raise CrawlError("Crawl snapshot does not belong to this site")
+    if snapshot is None:
+        snapshot = CrawlSnapshot(
+            site_id=site_id,
+            status="running",
+            extracted_data={"adapter": "first_party", "phase": "starting"},
+        )
+        db.add(snapshot)
+        await db.flush()
+        job.payload = {**(job.payload or {}), "snapshot_id": str(snapshot.id)}
+    else:
+        snapshot.status = "running"
+        snapshot.completed_at = None
+        snapshot.extracted_data = {
+            **(snapshot.extracted_data or {}),
+            "adapter": "first_party",
+            "phase": "resuming",
+        }
+    await db.commit()
+    await db.refresh(snapshot)
+    return snapshot
+
+
 async def run_first_party_crawl(
     db: AsyncSession,
     site_id: uuid.UUID,
@@ -492,28 +705,16 @@ async def run_first_party_crawl(
     *,
     max_pages: int = 100,
     job_id: uuid.UUID | None = None,
+    control: Callable[[], Awaitable[bool]] | None = None,
 ) -> CrawlSnapshot:
+    if not job_id:
+        raise CrawlError("Durable first-party crawls require a persisted crawl job")
     settings = get_settings()
     bounded_max_pages = max(1, min(int(max_pages), 100_000))
-    snapshot = CrawlSnapshot(
-        site_id=site_id,
-        status="running",
-        extracted_data={"adapter": "first_party", "phase": "starting"},
-    )
-    db.add(snapshot)
-    await db.flush()
-    if job_id:
-        job = await db.get(JobQueue, job_id)
-        if job:
-            job.payload = {**(job.payload or {}), "snapshot_id": str(snapshot.id)}
-    await db.commit()
-    await db.refresh(snapshot)
+    frontier_limit = max(bounded_max_pages * 5, bounded_max_pages)
+    snapshot = await _crawl_snapshot_for_job(db, site_id=site_id, job_id=job_id)
 
     started = time.perf_counter()
-    errors: list[dict[str, str]] = []
-    blocked_by_robots = 0
-    persisted_paths: set[str] = set()
-    inlinks: dict[str, set[str]] = defaultdict(set)
 
     timeout = httpx.Timeout(
         settings.crawler_timeout_seconds,
@@ -526,9 +727,18 @@ async def run_first_party_crawl(
     }
 
     try:
+        if control and await control():
+            raise CrawlCancelled("Crawl cancellation requested")
         normalized_domain = _normalize_domain(domain)
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, headers=headers) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=False,
+            headers=headers,
+            limits=httpx.Limits(max_keepalive_connections=0),
+        ) as client:
             homepage = await _resolve_homepage(client, normalized_domain)
+            if control and await control():
+                raise CrawlCancelled("Crawl cancellation requested")
             homepage_url = _normalize_url(homepage.final_url, homepage.final_url, normalized_domain)
             if not homepage_url:
                 raise CrawlError("Resolved homepage is outside the configured domain")
@@ -536,44 +746,49 @@ async def run_first_party_crawl(
             base_url = _origin(homepage_url)
 
             robots = await _load_robots(client, base_url, site_host)
+            if control and await control():
+                raise CrawlCancelled("Crawl cancellation requested")
             sitemap_urls, sitemap_summary = await _discover_sitemap_urls(
                 client,
                 base_url,
                 site_host,
                 robots,
                 max_urls=max(bounded_max_pages * 3, bounded_max_pages),
+                control=control,
             )
 
-            queue: deque[str] = deque()
-            discovered: set[str] = set()
-            crawled: set[str] = set()
             prefetched: dict[str, FetchResult] = {homepage_url: homepage}
+            await _add_frontier_urls(
+                db,
+                job_id=job_id,
+                urls=[(homepage_url, None), *((url, "sitemap") for url in sitemap_urls)],
+                max_urls=frontier_limit,
+            )
+            await db.commit()
 
-            def discover(url: str | None) -> None:
-                if not url or url in discovered:
-                    return
-                if len(discovered) >= bounded_max_pages * 5:
-                    return
-                discovered.add(url)
-                queue.append(url)
+            while True:
+                if control and await control():
+                    raise CrawlCancelled("Crawl cancellation requested")
+                pages_crawled = await _pages_crawled_for_snapshot(db, snapshot)
+                if pages_crawled >= bounded_max_pages:
+                    break
+                frontier_rows = await _next_frontier_batch(
+                    db,
+                    job_id=job_id,
+                    limit=min(settings.crawler_concurrency, bounded_max_pages - pages_crawled),
+                )
+                if not frontier_rows:
+                    break
 
-            discover(homepage_url)
-            for sitemap_url in sitemap_urls:
-                discover(sitemap_url)
-
-            while queue and len(persisted_paths) < bounded_max_pages:
-                batch: list[str] = []
-                while queue and len(batch) < settings.crawler_concurrency:
-                    candidate = queue.popleft()
-                    if candidate in crawled:
-                        continue
-                    crawled.add(candidate)
-                    if not robots.allowed(candidate, settings.crawler_user_agent):
-                        blocked_by_robots += 1
-                        continue
-                    batch.append(candidate)
-
-                if not batch:
+                allowed_rows: list[CrawlFrontier] = []
+                for frontier in frontier_rows:
+                    if robots.allowed(frontier.url, settings.crawler_user_agent):
+                        allowed_rows.append(frontier)
+                    else:
+                        frontier.status = "blocked"
+                        frontier.completed_at = datetime.now(timezone.utc)
+                if not allowed_rows:
+                    await db.commit()
                     continue
 
                 async def fetch_one(url: str) -> FetchResult:
@@ -595,25 +810,26 @@ async def run_first_party_crawl(
                                 await asyncio.sleep(0.25)
                     raise last_error or CrawlError("Page fetch failed")
 
-                results = await asyncio.gather(*(fetch_one(url) for url in batch), return_exceptions=True)
-                for requested_url, result in zip(batch, results):
+                results = await asyncio.gather(
+                    *(fetch_one(frontier.url) for frontier in allowed_rows),
+                    return_exceptions=True,
+                )
+                if control and await control():
+                    raise CrawlCancelled("Crawl cancellation requested")
+                for frontier, result in zip(allowed_rows, results):
+                    requested_url = frontier.url
                     if isinstance(result, BaseException):
-                        errors.append({
-                            "url": requested_url,
-                            "type": type(result).__name__,
-                            "message": str(result)[:500],
-                        })
+                        frontier.status = "failed"
+                        frontier.last_error = f"{type(result).__name__}: {str(result)[:1500]}"
+                        frontier.completed_at = datetime.now(timezone.utc)
                         continue
 
                     final_url = _normalize_url(result.final_url, requested_url, site_host)
                     if not final_url:
-                        errors.append({
-                            "url": requested_url,
-                            "type": "external_redirect",
-                            "message": "Final response resolved outside the configured site",
-                        })
+                        frontier.status = "failed"
+                        frontier.last_error = "Final response resolved outside the configured site"
+                        frontier.completed_at = datetime.now(timezone.utc)
                         continue
-                    crawled.add(final_url)
                     path = _path_key(final_url)
                     content_type = result.headers.get("content-type", "").lower()
                     is_html = "text/html" in content_type or "application/xhtml+xml" in content_type
@@ -623,6 +839,7 @@ async def run_first_party_crawl(
 
                     internal_links: list[str] = []
                     external_links = 0
+                    discovered_links: list[tuple[str, str | None]] = []
                     if is_html and "nofollow" not in parser.meta.get("robots", "").lower():
                         for href in parser.links:
                             normalized_link = _normalize_url(href, final_url, site_host)
@@ -630,8 +847,7 @@ async def run_first_party_crawl(
                                 target_path = _path_key(normalized_link)
                                 if normalized_link not in internal_links:
                                     internal_links.append(normalized_link)
-                                inlinks[target_path].add(path)
-                                discover(normalized_link)
+                                discovered_links.append((normalized_link, path))
                             else:
                                 absolute = urljoin(final_url, href)
                                 parsed_link = urlsplit(absolute)
@@ -657,7 +873,7 @@ async def run_first_party_crawl(
                         "internal_links": [_path_key(url) for url in internal_links[:250]],
                         "internal_links_count": len(internal_links),
                         "external_links_count": external_links,
-                        "linked_from": sorted(inlinks.get(path, set())),
+                        "linked_from": [],
                         "h1_count": len(h1_values),
                         "h2": parser.headings("h2")[:50],
                         "h3": parser.headings("h3")[:50],
@@ -686,68 +902,136 @@ async def run_first_party_crawl(
                         content_hash=content_hash,
                         metadata=metadata,
                     )
-                    persisted_paths.add(path)
+                    await _add_frontier_urls(
+                        db,
+                        job_id=job_id,
+                        urls=discovered_links,
+                        max_urls=frontier_limit,
+                    )
+                    frontier.status = "completed"
+                    frontier.last_error = None
+                    frontier.completed_at = datetime.now(timezone.utc)
 
-                    if len(persisted_paths) >= bounded_max_pages:
-                        break
-
-                snapshot.pages_discovered = len(discovered)
-                snapshot.pages_crawled = len(persisted_paths)
-                snapshot.errors = len(errors)
+                counts = await _frontier_counts(db, job_id)
+                pages_crawled = await _pages_crawled_for_snapshot(db, snapshot)
+                snapshot.pages_discovered = counts.get("total", 0)
+                snapshot.pages_crawled = pages_crawled
+                snapshot.errors = counts.get("failed", 0)
                 snapshot.extracted_data = {
                     "adapter": "first_party",
                     "phase": "crawling",
                     "base_url": base_url,
                     "robots_status": robots.status_code,
                     "sitemap_urls": sitemap_summary.get("sitemaps_checked", []),
-                    "robots_blocked": blocked_by_robots,
-                    "recent_errors": errors[-10:],
+                    "frontier": counts,
                 }
                 await db.commit()
+
+                if control and await control():
+                    raise CrawlCancelled("Crawl cancellation requested")
 
                 delay = max(settings.crawler_request_delay_ms / 1000, robots.crawl_delay)
                 if delay:
                     await asyncio.sleep(delay)
 
-            for target_path, sources in inlinks.items():
-                page = await db.scalar(select(Page).where(Page.site_id == site_id, Page.path == target_path))
-                if page:
-                    page.meta = {**(page.meta or {}), "linked_from": sorted(sources)[:500]}
+            if control and await control():
+                raise CrawlCancelled("Crawl cancellation requested")
+            await _rebuild_linked_from(db, site_id)
+            counts = await _frontier_counts(db, job_id)
+            pages_crawled = await _pages_crawled_for_snapshot(db, snapshot)
+            if pages_crawled >= bounded_max_pages:
+                queued_rows = list(
+                    (
+                        await db.execute(
+                            select(CrawlFrontier).where(
+                                CrawlFrontier.job_id == job_id,
+                                CrawlFrontier.status == "queued",
+                            )
+                        )
+                    ).scalars().all()
+                )
+                for row in queued_rows:
+                    row.status = "deferred"
+                if queued_rows:
+                    await db.flush()
+                counts = await _frontier_counts(db, job_id)
 
             elapsed_ms = int((time.perf_counter() - started) * 1000)
-            snapshot.pages_discovered = len(discovered)
-            snapshot.pages_crawled = len(persisted_paths)
-            snapshot.errors = len(errors)
+            snapshot.pages_discovered = counts.get("total", 0)
+            snapshot.pages_crawled = pages_crawled
+            snapshot.errors = counts.get("failed", 0)
             snapshot.completed_at = datetime.now(timezone.utc)
-            snapshot.status = "completed" if persisted_paths else "failed"
+            snapshot.status = "completed" if pages_crawled else "failed"
             snapshot.extracted_data = {
                 "adapter": "first_party",
-                "phase": "completed" if persisted_paths else "failed",
+                "phase": "completed" if pages_crawled else "failed",
                 "base_url": base_url,
                 "homepage_status": homepage.status_code,
                 "robots": {
                     "url": robots.url,
                     "status_code": robots.status_code,
                     "error": robots.error,
-                    "blocked_urls": blocked_by_robots,
+                    "blocked_urls": counts.get("blocked", 0),
                 },
                 "sitemap": sitemap_summary,
+                "frontier": counts,
                 "duration_ms": elapsed_ms,
                 "max_pages": bounded_max_pages,
-                "errors": errors[:50],
+                "errors": [
+                    {"url": row.url, "message": row.last_error}
+                    for row in list(
+                        (
+                            await db.execute(
+                                select(CrawlFrontier)
+                                .where(
+                                    CrawlFrontier.job_id == job_id,
+                                    CrawlFrontier.status == "failed",
+                                )
+                                .order_by(CrawlFrontier.updated_at.desc())
+                                .limit(50)
+                            )
+                        ).scalars().all()
+                    )
+                ],
             }
+            if control and await control():
+                raise CrawlCancelled("Crawl cancellation requested")
             await db.commit()
             await db.refresh(snapshot)
             return snapshot
 
+    except CrawlLeaseLost:
+        raise
+    except CrawlCancelled as exc:
+        counts = await _frontier_counts(db, job_id)
+        snapshot.status = "cancelled"
+        snapshot.pages_discovered = counts.get("total", 0)
+        snapshot.pages_crawled = await _pages_crawled_for_snapshot(db, snapshot)
+        snapshot.errors = counts.get("failed", 0)
+        snapshot.completed_at = datetime.now(timezone.utc)
+        snapshot.extracted_data = {
+            **(snapshot.extracted_data or {}),
+            "adapter": "first_party",
+            "phase": "cancelled",
+            "frontier": counts,
+            "error": str(exc),
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+        }
+        await db.commit()
+        await db.refresh(snapshot)
+        return snapshot
     except Exception as exc:
         logger.exception("First-party crawl failed for %s", domain)
+        counts = await _frontier_counts(db, job_id)
         snapshot.status = "failed"
-        snapshot.errors = max(snapshot.errors or 0, 1)
+        snapshot.pages_discovered = counts.get("total", 0)
+        snapshot.pages_crawled = await _pages_crawled_for_snapshot(db, snapshot)
+        snapshot.errors = max(counts.get("failed", 0), 1)
         snapshot.completed_at = datetime.now(timezone.utc)
         snapshot.extracted_data = {
             "adapter": "first_party",
             "phase": "failed",
+            "frontier": counts,
             "error_type": type(exc).__name__,
             "error": str(exc)[:1000],
             "duration_ms": int((time.perf_counter() - started) * 1000),

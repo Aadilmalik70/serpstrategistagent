@@ -19,10 +19,6 @@ async def _noop_audit(*args, **kwargs):
     del args, kwargs
 
 
-async def _noop_crawl(*args, **kwargs):
-    del args, kwargs
-
-
 def test_public_free_audit_create_status_and_dedup(monkeypatch) -> None:
     monkeypatch.setattr("app.routers.public_audits.execute_free_audit", _noop_audit)
     suffix = uuid.uuid4().hex
@@ -73,7 +69,6 @@ def test_public_free_audit_validates_input(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_completed_free_audit_claim_is_authenticated_tenant_safe_and_idempotent(monkeypatch) -> None:
     monkeypatch.setattr("app.routers.public_audits.execute_free_audit", _noop_audit)
-    monkeypatch.setattr("app.routers.crawl.run_crawl_job", _noop_crawl)
     suffix = uuid.uuid4().hex
     domain = f"claim-{suffix}.example.com"
     transport = httpx.ASGITransport(app=app)

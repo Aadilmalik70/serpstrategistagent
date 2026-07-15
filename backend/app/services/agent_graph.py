@@ -28,6 +28,7 @@ class AgentState(TypedDict):
     reconciliation: dict[str, Any]
     error: str | None
     health_score: dict[str, Any] | None
+    analysis_lease_owner: str | None
 
 
 async def observe_node(state: AgentState) -> AgentState:
@@ -74,6 +75,10 @@ async def report_node(state: AgentState) -> AgentState:
     async with async_session_factory() as db:
         agent_run = await db.get(AgentRun, run_id)
         if not agent_run:
+            return state
+        lease_owner = state.get("analysis_lease_owner")
+        if lease_owner and (agent_run.meta or {}).get("analysis_lease_owner") != lease_owner:
+            logger.warning("Discarding stale analysis finalization for run %s", run_id)
             return state
         if state.get("error"):
             agent_run.status = "failed"
@@ -122,7 +127,12 @@ def build_agent_graph():
 agent_graph = build_agent_graph()
 
 
-async def run_agent_graph(site_id: uuid.UUID, run_id: uuid.UUID) -> None:
+async def run_agent_graph(
+    site_id: uuid.UUID,
+    run_id: uuid.UUID,
+    *,
+    analysis_lease_owner: str | None = None,
+) -> None:
     try:
         await agent_graph.ainvoke({
             "site_id": str(site_id),
@@ -133,12 +143,16 @@ async def run_agent_graph(site_id: uuid.UUID, run_id: uuid.UUID) -> None:
             "reconciliation": {},
             "error": None,
             "health_score": None,
+            "analysis_lease_owner": analysis_lease_owner,
         })
     except Exception as exc:
         logger.exception("Agent graph failed for site %s", site_id)
         async with async_session_factory() as db:
             agent_run = await db.get(AgentRun, run_id)
-            if agent_run:
+            if agent_run and (
+                not analysis_lease_owner
+                or (agent_run.meta or {}).get("analysis_lease_owner") == analysis_lease_owner
+            ):
                 agent_run.status = "failed"
                 agent_run.error = str(exc)[:2000]
                 agent_run.summary = str(exc)[:2000]

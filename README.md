@@ -6,6 +6,7 @@ Autonomous Search Growth Agent that continuously improves a website's SEO and GE
 
 - **Frontend:** Next.js 16 (App Router) + Tailwind CSS + NextAuth.js
 - **Backend:** FastAPI + SQLAlchemy (async) + PostgreSQL
+- **Crawl runtime:** durable PostgreSQL jobs and URL frontier with Redis wake-up
 - **Agent Runtime:** LangGraph (Phase 2)
 - **Deployment:** Railway
 
@@ -29,6 +30,16 @@ cp .env.example .env    # Edit with your DB credentials
 alembic upgrade head    # Run migrations
 uvicorn app.main:app --reload
 ```
+
+Set `CRAWL_WORKER_ENABLED=true` on the API/worker service. Crawl requests are
+persisted and will remain queued when no crawl worker is enabled; API background
+tasks do not execute crawls.
+
+For the first production rollout of migration `018`, use a two-step cutover:
+deploy the schema and application with `CRAWL_WORKER_ENABLED=false`, wait until
+the previous API replicas and their in-process crawls have stopped, then enable
+the durable worker and redeploy. This prevents a legacy background crawl and a
+new leased worker from processing the same migrated job during a rolling deploy.
 
 ### Frontend
 
