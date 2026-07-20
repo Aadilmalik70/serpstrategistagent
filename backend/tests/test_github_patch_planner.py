@@ -113,7 +113,7 @@ def test_generated_title_patch_must_resolve_the_detector_threshold() -> None:
 def test_generated_title_patch_accounts_for_rendered_site_suffix() -> None:
     before = (
         "export const metadata = buildMarketingMetadata({\n"
-        '  title: " ",\n'
+        '  title: "",\n'
         "});\n"
     )
     after = (
@@ -127,6 +127,7 @@ def test_generated_title_patch_accounts_for_rendered_site_suffix() -> None:
         after=after,
         observed_title="| SERP Strategists",
     ) == 2
+    assert planner._primary_static_title(before) == ""
 
     with pytest.raises(planner.GitHubPatchPlanningError) as unchanged_title:
         planner.validate_generated_patch(
