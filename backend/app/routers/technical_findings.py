@@ -106,6 +106,7 @@ def _response(finding: Issue, action: OperatorAction | None = None) -> Technical
         patch_status=str(planner.get("status") or "").strip().lower() or None,
         patch_reason=str(planner.get("reason") or "").strip() or None,
         patch_source_path=str(planner.get("source_path") or "").strip() or None,
+        patch_model=str(planner.get("model") or "").strip() or None,
     )
 
 

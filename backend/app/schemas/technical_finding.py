@@ -40,6 +40,7 @@ class TechnicalFindingResponse(BaseModel):
     patch_status: str | None = None
     patch_reason: str | None = None
     patch_source_path: str | None = None
+    patch_model: str | None = None
 
 
 class TechnicalFindingQueueResponse(BaseModel):

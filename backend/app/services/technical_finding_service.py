@@ -588,6 +588,7 @@ def _action_data(
             "version": PLANNER_VERSION,
             "reason_code": patch_plan.reason_code if patch_plan else "planning_not_attempted",
             "reason": patch_plan.reason if patch_plan else "Repository patch planning was not attempted.",
+            "model": patch_plan.model if patch_plan else None,
         },
     }
     rollback_plan: dict[str, Any] = {
