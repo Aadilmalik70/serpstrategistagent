@@ -414,6 +414,35 @@ def _primary_static_title(content: str) -> str | None:
     return None
 
 
+def _observed_title(finding: Issue) -> str | None:
+    for evidence in finding.evidence or []:
+        if not isinstance(evidence, dict) or evidence.get("type") != "crawl_observation":
+            continue
+        observed = evidence.get("observed")
+        title = observed.get("title") if isinstance(observed, dict) else None
+        if isinstance(title, str):
+            return " ".join(title.split())
+    return None
+
+
+def _rendered_title_candidate(
+    *,
+    before_title: str | None,
+    after_title: str,
+    observed_title: str | None,
+) -> str:
+    if not observed_title:
+        return after_title
+    if before_title and before_title in observed_title:
+        return observed_title.replace(before_title, after_title, 1)
+    if before_title == "" and observed_title.startswith(("|", "-", "—", "–", ":")):
+        suffix = observed_title.lstrip("|-—–: ").strip()
+        if suffix and suffix.casefold() in after_title.casefold():
+            return after_title
+        return f"{after_title} {observed_title}".strip()
+    return after_title
+
+
 def _alias_base(source_path: str) -> str:
     parts = source_path.strip("/").split("/")
     for marker in ("app", "pages", "routes"):
@@ -520,6 +549,7 @@ def validate_generated_patch(
     finding_type: str,
     before: str,
     after: str,
+    observed_title: str | None = None,
 ) -> int:
     settings = get_settings()
     if not after or "\x00" in after or after == before:
@@ -595,12 +625,36 @@ def validate_generated_patch(
     elif finding_type in {"missing_title", "title_too_long", "title_too_short"}:
         before_title = _primary_static_title(before)
         after_title = _primary_static_title(after)
+        before_effective = observed_title if observed_title is not None else before_title
         before_defect = (
-            (finding_type == "missing_title" and before_title is None)
-            or (finding_type == "title_too_long" and before_title is not None and len(before_title) > 60)
-            or (finding_type == "title_too_short" and before_title is not None and len(before_title) < 20)
+            (finding_type == "missing_title" and not before_effective)
+            or (
+                finding_type == "title_too_long"
+                and before_effective is not None
+                and len(before_effective) > 60
+            )
+            or (
+                finding_type == "title_too_short"
+                and before_effective is not None
+                and len(before_effective) < 20
+            )
         )
-        if not before_defect or after_title is None or not 20 <= len(after_title) <= 60:
+        after_effective = (
+            _rendered_title_candidate(
+                before_title=before_title,
+                after_title=after_title,
+                observed_title=observed_title,
+            )
+            if after_title is not None
+            else None
+        )
+        if (
+            not before_defect
+            or after_title is None
+            or after_title == before_title
+            or after_effective is None
+            or not 20 <= len(after_effective) <= 60
+        ):
             raise GitHubPatchPlanningError(
                 "The generated patch did not replace the detected title defect with a 20-60 character title",
                 code="github_planner_postcondition_failed",
@@ -647,7 +701,10 @@ def _planner_messages(
                 "Make the smallest source change that resolves this finding. Preserve the file's framework, style, "
                 "formatting, and all unrelated content. For missing image alt text, infer concise contextual alt text "
                 "only when supported by the component, nearby copy, or stable image name. If meaningful alt text "
-                "cannot be supported by the source, return can_patch=false instead of inventing it.\n\n"
+                "cannot be supported by the source, return can_patch=false instead of inventing it. For title "
+                "findings, change the static source title so the rendered title is 20-60 characters. Account for "
+                "any site-name prefix or suffix visible in the crawl evidence while preserving the existing metadata "
+                "helper.\n\n"
                 f"BEGIN UNTRUSTED SOURCE\n{source}\nEND UNTRUSTED SOURCE"
             ),
         },
@@ -810,6 +867,7 @@ async def plan_patch_for_finding(
             finding_type=finding.finding_type,
             before=source,
             after=generated,
+            observed_title=_observed_title(finding),
         )
     except AIGatewayError as exc:
         return RepositoryPatchPlan.fallback(
