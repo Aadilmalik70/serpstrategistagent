@@ -2,7 +2,7 @@
 
 ## Release boundary
 
-- API: `0.18.3`
+- API: `0.18.4`
 - Database migration: none; existing JSON action contracts store planning metadata
 - Input: one active crawl-backed Technical Finding affecting one URL
 - Output: either one exact, operator-reviewable GitHub full-file patch or an explicit simulation fallback
@@ -84,7 +84,7 @@ context, the planner must decline instead of inventing it.
 
 ## Deployment
 
-1. Deploy API `0.18.3` with `GITHUB_PATCH_PLANNING_ENABLED=false`.
+1. Deploy API `0.18.4` with `GITHUB_PATCH_PLANNING_ENABLED=false`.
 2. Confirm `/health` reports `github_patch_planning=disabled`.
 3. In **Settings → Integrations**, map a disposable GitHub App repository to a
    disposable site and confirm **Draft PR ready**.
@@ -182,6 +182,13 @@ which defaults to `posiden/deepseek-v4-flash`, instead of inheriting a possibly
 overridden general-purpose primary model. `/health` exposes the configured
 planner model. Ready and postcondition-fallback actions record the model that
 actually returned the AI response, and the Technical Findings UI displays it.
+
+### Empty metadata titles (`0.18.4`)
+
+The repository validator treats a literal `title: ""` as an empty static title
+instead of an unparseable title. This lets metadata-helper validation combine a
+generated route title such as `Terms & Conditions` with the crawl-observed site
+suffix before enforcing the rendered 20–60 character boundary.
 
 ## Rollback of the release
 

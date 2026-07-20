@@ -412,7 +412,7 @@ def _primary_static_title(content: str) -> str | None:
     if html_match:
         return " ".join(html_match.group(1).split())
     metadata_match = re.search(
-        r"\bmetadata\b[\s\S]{0,2500}?\btitle\s*:\s*[\"'`]([^\"'`]+)[\"'`]",
+        r"\bmetadata\b[\s\S]{0,2500}?\btitle\s*:\s*[\"'`]([^\"'`]*)[\"'`]",
         content,
         re.IGNORECASE,
     )
