@@ -106,7 +106,7 @@ class PageHtmlParser(HTMLParser):
         self.meta: dict[str, str] = {}
         self.canonical: str | None = None
         self.links: list[str] = []
-        self.images: list[dict[str, str]] = []
+        self.images: list[dict[str, Any]] = []
         self.hreflang: list[dict[str, str]] = []
         self.html_lang: str | None = None
         self.json_ld_count = 0
@@ -149,6 +149,7 @@ class PageHtmlParser(HTMLParser):
             self.images.append({
                 "src": values.get("src", "")[:2048],
                 "alt": values.get("alt", "")[:1000],
+                "has_alt": "alt" in values,
             })
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -1064,7 +1065,9 @@ async def run_first_party_crawl(
                         "h2": parser.headings("h2")[:50],
                         "h3": parser.headings("h3")[:50],
                         "images_count": len(parser.images),
-                        "images_without_alt": sum(1 for image in parser.images if not image.get("alt")),
+                        "images_without_alt": sum(
+                            1 for image in parser.images if not image.get("has_alt")
+                        ),
                         "lang": parser.html_lang,
                         "viewport": parser.meta.get("viewport"),
                         "robots": robots_directives,

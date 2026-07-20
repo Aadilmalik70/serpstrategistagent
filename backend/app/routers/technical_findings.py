@@ -65,6 +65,11 @@ async def _latest_action(db: AsyncSession, workspace_id: uuid.UUID, finding_id: 
 
 
 def _response(finding: Issue, action: OperatorAction | None = None) -> TechnicalFindingResponse:
+    execution_target = action.execution_target if action else {}
+    proposed_diff = action.proposed_diff if action else {}
+    planner = proposed_diff.get("planner") if isinstance(proposed_diff, dict) else {}
+    if not isinstance(planner, dict):
+        planner = {}
     return TechnicalFindingResponse(
         id=finding.id,
         site_id=finding.site_id,
@@ -93,6 +98,14 @@ def _response(finding: Issue, action: OperatorAction | None = None) -> Technical
         resolved_at=finding.resolved_at,
         action_id=action.id if action else None,
         action_status=action.status if action else None,
+        action_adapter=(
+            str(execution_target.get("adapter") or "").strip().lower() or None
+            if isinstance(execution_target, dict)
+            else None
+        ),
+        patch_status=str(planner.get("status") or "").strip().lower() or None,
+        patch_reason=str(planner.get("reason") or "").strip() or None,
+        patch_source_path=str(planner.get("source_path") or "").strip() or None,
     )
 
 

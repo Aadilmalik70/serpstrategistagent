@@ -46,3 +46,4 @@ class GitHubRepositoryResponse(BaseModel):
     authorization_source: str = "public"
     authorization_ready: bool = False
     execution_ready: bool = False
+    patch_planning_ready: bool = False

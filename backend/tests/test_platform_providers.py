@@ -49,6 +49,8 @@ async def test_ai_gateway_contracts_use_only_server_secret(
         assert request.url.path == expected_path
         payload = json.loads(request.content)
         assert payload["model"] == "posiden/deepseek-v4-flash"
+        if endpoint != "responses":
+            assert payload["max_tokens"] == 1024
         if endpoint == "messages":
             assert request.headers["x-api-key"] == secret
             assert request.headers["anthropic-version"] == "2023-06-01"

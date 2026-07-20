@@ -365,7 +365,9 @@ async def crawl_and_sync_pages(domain: str, site_id: "uuid.UUID", max_pages: int
                 images_data = p.get("images", [])
                 if isinstance(images_data, list):
                     page_meta["images_count"] = len(images_data)
-                    page_meta["images_without_alt"] = sum(1 for img in images_data if not img.get("alt"))
+                    page_meta["images_without_alt"] = sum(
+                        1 for img in images_data if isinstance(img, dict) and "alt" not in img
+                    )
                 # Size
                 size_val = p.get("size")
                 if size_val:

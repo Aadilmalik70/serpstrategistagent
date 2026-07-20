@@ -29,6 +29,10 @@ type Finding = {
   last_seen_at: string;
   action_id: string | null;
   action_status: string | null;
+  action_adapter: string | null;
+  patch_status: string | null;
+  patch_reason: string | null;
+  patch_source_path: string | null;
 };
 
 type FindingQueue = {
@@ -227,6 +231,18 @@ export default function IssuesPanel({ siteId, site }: { siteId: string; site?: S
                 <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{finding.recommendation}</p>
               )}
 
+              {finding.action_id && (
+                <div className={`mt-3 rounded-lg border px-3 py-2 text-sm ${finding.action_adapter === "github" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-gray-200 bg-gray-50 text-gray-600"}`}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold">
+                      {finding.action_adapter === "github" ? "GitHub patch ready" : "Simulation fallback"}
+                    </span>
+                    {finding.patch_source_path && <span className="rounded bg-white/70 px-2 py-0.5 font-mono text-xs">{finding.patch_source_path}</span>}
+                  </div>
+                  {finding.action_adapter !== "github" && finding.patch_reason && <p className="mt-1 text-xs">{finding.patch_reason}</p>}
+                </div>
+              )}
+
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3">
                 <p className="text-xs text-gray-400">
                   Seen {finding.occurrence_count}× · regressions {finding.regression_count} · detector {finding.detector_version}
@@ -234,7 +250,7 @@ export default function IssuesPanel({ siteId, site }: { siteId: string; site?: S
                 <div className="flex gap-2">
                   {finding.action_id ? (
                     <Link href={`/actions/${finding.action_id}`} className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
-                      View action · {finding.action_status}
+                      {finding.action_adapter === "github" ? "Review GitHub patch" : "View action"} · {finding.action_status}
                     </Link>
                   ) : finding.status === "open" || finding.status === "regressed" ? (
                     <button type="button" onClick={() => ensureAction(finding.id)} className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
