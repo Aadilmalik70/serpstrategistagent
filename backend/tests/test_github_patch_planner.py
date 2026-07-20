@@ -110,6 +110,44 @@ def test_generated_title_patch_must_resolve_the_detector_threshold() -> None:
     assert unchanged_defect.value.code == "github_planner_postcondition_failed"
 
 
+def test_generated_title_patch_accounts_for_rendered_site_suffix() -> None:
+    before = (
+        "export const metadata = buildMarketingMetadata({\n"
+        '  title: " ",\n'
+        "});\n"
+    )
+    after = (
+        "export const metadata = buildMarketingMetadata({\n"
+        '  title: "Terms and Conditions",\n'
+        "});\n"
+    )
+    assert planner.validate_generated_patch(
+        finding_type="title_too_short",
+        before=before,
+        after=after,
+        observed_title="| SERP Strategists",
+    ) == 2
+
+    with pytest.raises(planner.GitHubPatchPlanningError) as unchanged_title:
+        planner.validate_generated_patch(
+            finding_type="title_too_short",
+            before=before,
+            after=before.replace("});", '  description: "Updated only"\n});'),
+            observed_title="| SERP Strategists",
+        )
+    assert unchanged_title.value.code == "github_planner_postcondition_failed"
+
+    finding = SimpleNamespace(
+        evidence=[
+            {
+                "type": "crawl_observation",
+                "observed": {"title": "  | SERP Strategists  ", "length": 18},
+            }
+        ]
+    )
+    assert planner._observed_title(finding) == "| SERP Strategists"
+
+
 def test_exact_patch_idempotency_is_scoped_to_repository_mapping() -> None:
     finding = SimpleNamespace(
         id=uuid.uuid4(),

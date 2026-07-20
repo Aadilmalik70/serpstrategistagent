@@ -2,7 +2,7 @@
 
 ## Release boundary
 
-- API: `0.18.1`
+- API: `0.18.2`
 - Database migration: none; existing JSON action contracts store planning metadata
 - Input: one active crawl-backed Technical Finding affecting one URL
 - Output: either one exact, operator-reviewable GitHub full-file patch or an explicit simulation fallback
@@ -83,7 +83,7 @@ context, the planner must decline instead of inventing it.
 
 ## Deployment
 
-1. Deploy API `0.18.1` with `GITHUB_PATCH_PLANNING_ENABLED=false`.
+1. Deploy API `0.18.2` with `GITHUB_PATCH_PLANNING_ENABLED=false`.
 2. Confirm `/health` reports `github_patch_planning=disabled`.
 3. In **Settings → Integrations**, map a disposable GitHub App repository to a
    disposable site and confirm **Draft PR ready**.
@@ -164,6 +164,14 @@ For `/terms` on `serpstrategists.com`, the current logo images use explicit
 `alt=""` plus `aria-hidden="true"`. They are decorative, so the correct result
 after a fresh crawl is a resolved finding and cancelled legacy action—not a
 GitHub patch.
+
+### Metadata-helper title validation (`0.18.2`)
+
+When a source uses a metadata helper that adds a site-name prefix or suffix,
+the source title literal can be shorter than 20 characters while the rendered
+title is valid. Title-patch validation uses the crawl-observed rendered title
+to preserve that affix and evaluates the predicted rendered result against the
+same 20–60 character detector boundary.
 
 ## Rollback of the release
 
