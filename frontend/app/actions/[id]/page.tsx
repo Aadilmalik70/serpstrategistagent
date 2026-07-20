@@ -20,6 +20,8 @@ type ActionEvent = {
 
 type OperatorAction = {
   id: string;
+  site_id: string;
+  source: string;
   status: string;
   title: string;
   description: string | null;
@@ -244,7 +246,10 @@ export default function OperatorActionDetailPage() {
   const adapter = String(action.execution_target.adapter || action.execution_target.provider || action.execution_target.type || "not configured");
   const patchPlanner = recordValue(action.proposed_diff.planner);
   const patchFiles = Array.isArray(action.proposed_diff.files) ? action.proposed_diff.files : [];
-  const exactPatchReady = adapter === "github" && patchPlanner.status === "ready" && patchFiles.length > 0;
+  const plannerStatus = typeof patchPlanner.status === "string" ? patchPlanner.status : null;
+  const hasPlannerMetadata = Boolean(plannerStatus);
+  const exactPatchReady = adapter === "github" && plannerStatus === "ready" && patchFiles.length > 0;
+  const legacyTechnicalSimulation = action.source === "technical_finding_pipeline" && adapter === "simulation" && !hasPlannerMetadata;
   const activeJob = jobs?.find((job) => ["queued", "running", "retry_wait"].includes(job.status));
   const executionEnvelope = recordValue(action.execution_result?.execution);
   const providerExecution = recordValue(executionEnvelope.execution);
@@ -300,7 +305,8 @@ export default function OperatorActionDetailPage() {
                   <button onClick={() => transition("reject")} disabled={Boolean(busy) || !rejectReason.trim()} className="min-h-11 rounded-full border border-red-200 px-5 text-sm font-semibold text-red-700 disabled:opacity-50">Reject</button>
                   <button onClick={() => transition("approve")} disabled={Boolean(busy)} className="min-h-11 rounded-full bg-[#202020] px-5 text-sm font-semibold text-white disabled:opacity-50">Approve</button>
                 </>}
-                {action.status === "approved" && <button onClick={() => queueExecution("execute")} disabled={Boolean(busy)} className="min-h-11 rounded-full bg-[#ea2804] px-5 text-sm font-semibold text-white disabled:opacity-50">{busy === "execute" ? "Queueing…" : "Queue execution"}</button>}
+                {action.status === "approved" && !legacyTechnicalSimulation && <button onClick={() => queueExecution("execute")} disabled={Boolean(busy)} className="min-h-11 rounded-full bg-[#ea2804] px-5 text-sm font-semibold text-white disabled:opacity-50">{busy === "execute" ? "Queueing…" : "Queue execution"}</button>}
+                {action.status === "approved" && legacyTechnicalSimulation && <Link href={`/sites/${action.site_id}`} className="inline-flex min-h-11 items-center rounded-full bg-[#202020] px-5 text-sm font-semibold text-white">Re-crawl & refresh finding</Link>}
                 {action.status === "succeeded" && <button onClick={() => queueExecution("rollback")} disabled={Boolean(busy)} className="min-h-11 rounded-full bg-[#202020] px-5 text-sm font-semibold text-white disabled:opacity-50">{busy === "rollback" ? "Queueing…" : "Queue rollback"}</button>}
                 {["draft", "needs_approval", "approved"].includes(action.status) && <button onClick={() => transition("cancel")} disabled={Boolean(busy)} className="min-h-11 rounded-full border border-[rgba(32,32,32,0.16)] px-5 text-sm font-semibold disabled:opacity-50">Cancel</button>}
               </div>
@@ -308,7 +314,7 @@ export default function OperatorActionDetailPage() {
           </section>
         )}
 
-        <section className={`mt-5 rounded-[20px] border p-5 sm:p-6 ${exactPatchReady ? "border-emerald-200 bg-emerald-50" : "border-[rgba(32,32,32,0.12)] bg-white"}`}>
+        {hasPlannerMetadata && <section className={`mt-5 rounded-[20px] border p-5 sm:p-6 ${exactPatchReady ? "border-emerald-200 bg-emerald-50" : "border-[rgba(32,32,32,0.12)] bg-white"}`}>
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#646464]">Repository patch plan</p>
           <div className="mt-2 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
@@ -325,14 +331,27 @@ export default function OperatorActionDetailPage() {
               {patchFiles.length > 0 && <span className="rounded-full bg-white px-3 py-1.5">{patchFiles.length} file{patchFiles.length === 1 ? "" : "s"}</span>}
             </div>
           </div>
-        </section>
+        </section>}
+
+        {legacyTechnicalSimulation && <section className="mt-5 rounded-[20px] border border-amber-200 bg-amber-50 p-5 sm:p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">Legacy technical action</p>
+          <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em]">Re-crawl before creating a repository patch</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-amber-950/75">
+            This immutable action predates repository-aware planning and will not convert in place. Re-crawl the site and refresh Technical Findings. If the finding still reproduces, the pipeline will create a new reviewed action; if it no longer reproduces, this action will be cancelled.
+          </p>
+          <Link href={`/sites/${action.site_id}`} className="mt-4 inline-flex min-h-10 items-center rounded-full bg-[#202020] px-4 text-sm font-semibold text-white">Open site findings</Link>
+        </section>}
 
         <section className="mt-5 rounded-[20px] border border-[rgba(32,32,32,0.12)] bg-white p-5 sm:p-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#646464]">Durable execution</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-[-0.035em]">Jobs, leases and validation</h2>
-              <p className="mt-2 text-sm text-[#646464]">Adapter: <span className="font-semibold text-[#202020]">{adapter}</span>. GitHub execution creates a human-reviewed draft PR from an approved exact file plan; WordPress execution and autonomous merge remain disabled.</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-[-0.035em]">{legacyTechnicalSimulation ? "Execution unavailable for this legacy action" : "Jobs, leases and validation"}</h2>
+              <p className="mt-2 text-sm text-[#646464]">
+                {legacyTechnicalSimulation
+                  ? "This historical record retains its original simulation target for audit integrity, but it cannot be queued. Re-crawl and refresh the finding to resolve it or create a new repository-aware action."
+                  : <>Adapter: <span className="font-semibold text-[#202020]">{adapter}</span>. GitHub execution creates a human-reviewed draft PR from an approved exact file plan; WordPress execution and autonomous merge remain disabled.</>}
+              </p>
             </div>
             <div className="flex flex-wrap gap-2">
               {pullRequestUrl && <a href={pullRequestUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center rounded-full bg-[#202020] px-4 text-sm font-semibold text-white">Open draft PR ↗</a>}

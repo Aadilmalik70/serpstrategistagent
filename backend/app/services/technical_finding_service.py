@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.crawl_snapshot import CrawlSnapshot
+from app.models.github_app import GitHubRepositoryConnection
 from app.models.issue import Issue
 from app.models.operator_action import OperatorAction, OperatorActionEvent
 from app.models.page import Page
@@ -602,9 +603,18 @@ def _action_data(
     idempotency_key = f"finding:{finding.fingerprint}:r{finding.regression_count}"
     if patch_plan and patch_plan.ready:
         planner = proposed_diff.get("planner") if isinstance(proposed_diff.get("planner"), dict) else {}
-        expected_sha = str(planner.get("expected_sha") or "")[:12]
+        scope = "|".join(
+            [
+                str(execution_target.get("repository_connection_id") or ""),
+                str(execution_target.get("repository") or ""),
+                str(execution_target.get("base_branch") or ""),
+                str(execution_target.get("source_path") or ""),
+                str(planner.get("expected_sha") or ""),
+            ]
+        )
+        scope_hash = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:20]
         idempotency_key = (
-            f"finding:{finding.fingerprint}:r{finding.regression_count}:github:{expected_sha}"
+            f"finding:{finding.fingerprint}:r{finding.regression_count}:github:{scope_hash}"
         )
 
     return OperatorActionCreate(
@@ -657,7 +667,7 @@ def _action_data(
     )
 
 
-async def _cancel_superseded_simulation_actions(
+async def _cancel_superseded_actions(
     db: AsyncSession,
     *,
     workspace_id: uuid.UUID,
@@ -673,9 +683,6 @@ async def _cancel_superseded_simulation_actions(
         )
     )).scalars().all())
     for previous in previous_actions:
-        adapter = str((previous.execution_target or {}).get("adapter") or "").strip().lower()
-        if adapter != "simulation":
-            continue
         await cancel_action(
             db,
             workspace_id=workspace_id,
@@ -727,6 +734,102 @@ async def _refresh_simulation_fallback_metadata(
     await db.refresh(action)
 
 
+_CURRENT_ACTION_STATUSES = {
+    "draft",
+    "needs_approval",
+    "approved",
+    "blocked",
+    "execution_queued",
+    "executing",
+    "validating",
+    "succeeded",
+}
+_READY_PATCH_ACTION_STATUSES = _CURRENT_ACTION_STATUSES - {"blocked"}
+
+
+async def _latest_actions_by_finding(
+    db: AsyncSession,
+    *,
+    workspace_id: uuid.UUID,
+    finding_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, OperatorAction]:
+    if not finding_ids:
+        return {}
+    actions = list((await db.execute(
+        select(OperatorAction)
+        .where(
+            OperatorAction.workspace_id == workspace_id,
+            OperatorAction.issue_id.in_(finding_ids),
+            OperatorAction.status.in_(_CURRENT_ACTION_STATUSES),
+        )
+        .order_by(OperatorAction.created_at.desc())
+    )).scalars().all())
+    latest: dict[uuid.UUID, OperatorAction] = {}
+    for action in actions:
+        if action.issue_id is not None and action.issue_id not in latest:
+            latest[action.issue_id] = action
+    return latest
+
+
+def _planning_priority(finding: Issue, action: OperatorAction | None) -> tuple[int, str, str]:
+    proposed_diff = action.proposed_diff if action is not None else {}
+    planner = proposed_diff.get("planner") if isinstance(proposed_diff, dict) else {}
+    reason_code = planner.get("reason_code") if isinstance(planner, dict) else None
+    deferred = action is None or reason_code in {
+        None,
+        "planning_not_attempted",
+        "github_planning_budget_exhausted",
+    }
+    last_seen_at = finding.last_seen_at.isoformat() if finding.last_seen_at else ""
+    return (0 if deferred else 1, last_seen_at, str(finding.id))
+
+
+async def _ready_patch_actions_by_finding(
+    db: AsyncSession,
+    *,
+    workspace_id: uuid.UUID,
+    site_id: uuid.UUID,
+    finding_ids: list[uuid.UUID],
+    latest_actions: dict[uuid.UUID, OperatorAction] | None = None,
+) -> dict[uuid.UUID, OperatorAction]:
+    if not finding_ids:
+        return {}
+    connection = await db.scalar(
+        select(GitHubRepositoryConnection).where(
+            GitHubRepositoryConnection.workspace_id == workspace_id,
+            GitHubRepositoryConnection.site_id == site_id,
+            GitHubRepositoryConnection.status == "active",
+        )
+    )
+    if connection is None:
+        return {}
+    latest = latest_actions
+    if latest is None:
+        latest = await _latest_actions_by_finding(
+            db,
+            workspace_id=workspace_id,
+            finding_ids=finding_ids,
+        )
+    ready: dict[uuid.UUID, OperatorAction] = {}
+    for finding_id, action in latest.items():
+        if action.status not in _READY_PATCH_ACTION_STATUSES:
+            continue
+        target = action.execution_target or {}
+        proposed_diff = action.proposed_diff or {}
+        planner = proposed_diff.get("planner") if isinstance(proposed_diff, dict) else {}
+        if not isinstance(planner, dict):
+            continue
+        if (
+            str(target.get("adapter") or "").strip().lower() == "github"
+            and str(target.get("repository_connection_id") or "") == str(connection.id)
+            and str(target.get("repository") or "") == connection.repository_full_name
+            and str(target.get("base_branch") or "") == str(connection.default_branch or "")
+            and planner.get("status") == "ready"
+        ):
+            ready[finding_id] = action
+    return ready
+
+
 async def ensure_action_for_finding(
     db: AsyncSession,
     *,
@@ -735,6 +838,14 @@ async def ensure_action_for_finding(
     actor_user_id: uuid.UUID | None,
     allow_github_planning: bool = True,
 ) -> tuple[OperatorAction | None, bool]:
+    ready = await _ready_patch_actions_by_finding(
+        db,
+        workspace_id=workspace_id,
+        site_id=finding.site_id,
+        finding_ids=[finding.id],
+    )
+    if finding.id in ready:
+        return ready[finding.id], False
     patch_plan = (
         await github_patch_planner.plan_patch_for_finding(
             db,
@@ -758,7 +869,7 @@ async def ensure_action_for_finding(
     )
     if existing:
         if patch_plan.ready:
-            await _cancel_superseded_simulation_actions(
+            await _cancel_superseded_actions(
                 db,
                 workspace_id=workspace_id,
                 finding=finding,
@@ -786,7 +897,7 @@ async def ensure_action_for_finding(
         expected_version=action.version,
     )
     if patch_plan.ready:
-        await _cancel_superseded_simulation_actions(
+        await _cancel_superseded_actions(
             db,
             workspace_id=workspace_id,
             finding=finding,
@@ -839,11 +950,30 @@ async def run_technical_finding_pipeline(
             select(Issue).where(
                 Issue.site_id == site.id,
                 Issue.status.in_(ACTIVE_FINDING_STATUSES),
-            )
+            ).order_by(Issue.last_seen_at.asc(), Issue.id.asc())
         )).scalars().all())
+        latest_actions = await _latest_actions_by_finding(
+            db,
+            workspace_id=site.workspace_id,
+            finding_ids=[finding.id for finding in active_findings],
+        )
+        active_findings.sort(
+            key=lambda finding: _planning_priority(finding, latest_actions.get(finding.id))
+        )
+        ready_actions = await _ready_patch_actions_by_finding(
+            db,
+            workspace_id=site.workspace_id,
+            site_id=site.id,
+            finding_ids=[finding.id for finding in active_findings],
+            latest_actions=latest_actions,
+        )
         planning_attempts = 0
         planning_limit = get_settings().github_patch_planning_max_actions_per_refresh
         for finding in active_findings:
+            ready_action = ready_actions.get(finding.id)
+            if ready_action is not None:
+                action_ids.append(ready_action.id)
+                continue
             planning_candidate = github_patch_planner.is_patch_planning_candidate(finding)
             allow_github_planning = not planning_candidate or planning_attempts < planning_limit
             if planning_candidate and allow_github_planning:
