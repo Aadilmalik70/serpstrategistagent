@@ -400,6 +400,20 @@ def _image_tags_with_empty_alt(content: str) -> int:
     )
 
 
+def _primary_static_title(content: str) -> str | None:
+    html_match = re.search(r"<title\b[^>]*>([^<]+)</title>", content, re.IGNORECASE)
+    if html_match:
+        return " ".join(html_match.group(1).split())
+    metadata_match = re.search(
+        r"\bmetadata\b[\s\S]{0,2500}?\btitle\s*:\s*[\"'`]([^\"'`]+)[\"'`]",
+        content,
+        re.IGNORECASE,
+    )
+    if metadata_match:
+        return " ".join(metadata_match.group(1).split())
+    return None
+
+
 def _alias_base(source_path: str) -> str:
     parts = source_path.strip("/").split("/")
     for marker in ("app", "pages", "routes"):
@@ -455,6 +469,7 @@ async def _resolve_image_source(
             repository_paths=repository_paths,
         )
     )
+    queued = set(pending)
     inspected = 1
 
     while pending and inspected < settings.github_patch_planning_max_source_files:
@@ -468,6 +483,14 @@ async def _resolve_image_source(
         if len(candidate_source.encode("utf-8")) > settings.github_patch_planning_max_candidate_bytes:
             continue
         documents[candidate] = (candidate_sha, candidate_source)
+        for imported in resolve_local_imports(
+            source_path=candidate,
+            source=candidate_source,
+            repository_paths=repository_paths,
+        ):
+            if imported not in documents and imported not in queued:
+                pending.append(imported)
+                queued.add(imported)
 
     if pending:
         return RepositoryPatchPlan.fallback(
@@ -537,7 +560,7 @@ def validate_generated_patch(
         before_missing = _image_tags_without_alt(before)
         after_missing = _image_tags_without_alt(after)
         added_empty_alt = _image_tags_with_empty_alt(after) > _image_tags_with_empty_alt(before)
-        if before_missing < 1 or after_missing >= before_missing or added_empty_alt:
+        if before_missing < 1 or after_missing != 0 or added_empty_alt:
             raise GitHubPatchPlanningError(
                 "The generated patch did not add meaningful alt text to a source image",
                 code="github_planner_postcondition_failed",
@@ -569,11 +592,19 @@ def validate_generated_patch(
             "The generated patch did not add JSON-LD structured data",
             code="github_planner_postcondition_failed",
         )
-    elif "title" in finding_type and "title" not in after.lower():
-        raise GitHubPatchPlanningError(
-            "The generated patch did not update title metadata",
-            code="github_planner_postcondition_failed",
+    elif finding_type in {"missing_title", "title_too_long", "title_too_short"}:
+        before_title = _primary_static_title(before)
+        after_title = _primary_static_title(after)
+        before_defect = (
+            (finding_type == "missing_title" and before_title is None)
+            or (finding_type == "title_too_long" and before_title is not None and len(before_title) > 60)
+            or (finding_type == "title_too_short" and before_title is not None and len(before_title) < 20)
         )
+        if not before_defect or after_title is None or not 20 <= len(after_title) <= 60:
+            raise GitHubPatchPlanningError(
+                "The generated patch did not replace the detected title defect with a 20-60 character title",
+                code="github_planner_postcondition_failed",
+            )
     elif "meta_description" in finding_type and not any(
         marker in after.lower() for marker in ("description", "<meta")
     ):

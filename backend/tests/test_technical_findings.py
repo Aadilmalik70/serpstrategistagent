@@ -1,4 +1,5 @@
 import uuid
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 from fastapi.testclient import TestClient
@@ -8,6 +9,7 @@ from app.services import first_party_crawler as crawler
 from app.services.crawl_job_service import run_crawl_worker_tick
 from app.services.first_party_crawler import FetchResult
 from app.services.github_patch_planner import RepositoryPatchPlan
+from app.services.technical_finding_service import _planning_priority
 
 
 PASSWORD = "correct-horse-battery-staple"
@@ -45,6 +47,19 @@ def _result(url: str, body: str, content_type: str = "text/html") -> FetchResult
         redirect_chain=[],
         truncated=False,
     )
+
+
+def test_budget_deferred_findings_are_prioritized_on_the_next_refresh() -> None:
+    finding = SimpleNamespace(id=uuid.uuid4(), last_seen_at=None)
+    deferred = SimpleNamespace(
+        proposed_diff={"planner": {"reason_code": "github_planning_budget_exhausted"}}
+    )
+    attempted = SimpleNamespace(
+        proposed_diff={"planner": {"reason_code": "source_file_not_resolved"}}
+    )
+
+    assert _planning_priority(finding, None)[0] == 0
+    assert _planning_priority(finding, deferred) < _planning_priority(finding, attempted)
 
 
 def test_findings_are_reconciled_and_regressions_create_new_governed_actions(monkeypatch) -> None:
@@ -136,6 +151,9 @@ def test_findings_are_reconciled_and_regressions_create_new_governed_actions(mon
         assert len(duplicate["affected_urls"]) == 2
         assert duplicate["action_id"]
         assert duplicate["action_status"] in {"approved", "needs_approval", "blocked"}
+        cancellable = next(
+            item for item in items if item["action_status"] in {"approved", "needs_approval"}
+        )
 
         repeated = client.post(
             f"/technical-findings/sites/{site_id}/refresh",
@@ -159,6 +177,12 @@ def test_findings_are_reconciled_and_regressions_create_new_governed_actions(mon
         )
         assert resolved.status_code == 200, resolved.text
         assert resolved.json()["resolved"] > 0
+        cancelled_action = client.get(
+            f"/operator-actions/{cancellable['action_id']}",
+            headers=_headers(owner),
+        )
+        assert cancelled_action.status_code == 200, cancelled_action.text
+        assert cancelled_action.json()["status"] == "cancelled"
 
         state["fixed"] = False
         regression_crawl = client.post(

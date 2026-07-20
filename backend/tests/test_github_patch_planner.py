@@ -9,6 +9,7 @@ import pytest
 from app.config import get_settings
 from app.services.ai_gateway import AIGatewayResult
 from app.services import github_patch_planner as planner
+from app.services.technical_finding_service import _action_data
 
 
 class _ScalarSession:
@@ -82,6 +83,103 @@ def test_generated_alt_patch_requires_a_meaningful_improvement() -> None:
         )
     assert empty_alt.value.code == "github_planner_postcondition_failed"
 
+    with pytest.raises(planner.GitHubPatchPlanningError) as partial_alt:
+        planner.validate_generated_patch(
+            finding_type="images_missing_alt",
+            before='<img src="one.png"><img src="two.png">\n',
+            after='<img src="one.png" alt="First product view"><img src="two.png">\n',
+        )
+    assert partial_alt.value.code == "github_planner_postcondition_failed"
+
+
+def test_generated_title_patch_must_resolve_the_detector_threshold() -> None:
+    before = 'export const metadata = { title: "Tiny" };\n'
+    after = 'export const metadata = { title: "A descriptive technical SEO operations title" };\n'
+    assert planner.validate_generated_patch(
+        finding_type="title_too_short",
+        before=before,
+        after=after,
+    ) == 2
+
+    with pytest.raises(planner.GitHubPatchPlanningError) as unchanged_defect:
+        planner.validate_generated_patch(
+            finding_type="title_too_short",
+            before=before,
+            after='export const metadata = { title: "Tiny", description: "Added only a description" };\n',
+        )
+    assert unchanged_defect.value.code == "github_planner_postcondition_failed"
+
+
+def test_exact_patch_idempotency_is_scoped_to_repository_mapping() -> None:
+    finding = SimpleNamespace(
+        id=uuid.uuid4(),
+        site_id=uuid.uuid4(),
+        finding_type="missing_h1",
+        fingerprint="f" * 64,
+        regression_count=0,
+        category="technical",
+        title="Missing H1",
+        description="The page has no H1.",
+        recommendation="Add one descriptive H1.",
+        affected_url="/",
+        affected_urls=["/"],
+        evidence=[{"type": "crawl_observation"}],
+        impact_score=70,
+        confidence_score=99,
+        effort_score=25,
+        detector_version="first-party-v1",
+        status="open",
+        meta={"action": {"action_type": "content_refresh_draft", "risk_score": 10}},
+    )
+
+    def patch_plan(
+        connection_id: uuid.UUID,
+        *,
+        repository: str = "operator/site",
+        base_branch: str = "main",
+        source_path: str = "app/page.tsx",
+    ) -> planner.RepositoryPatchPlan:
+        return planner.RepositoryPatchPlan(
+            status="ready",
+            reason_code="exact_patch_ready",
+            reason="Exact patch ready.",
+            execution_target={
+                "adapter": "github",
+                "repository_connection_id": str(connection_id),
+                "repository": repository,
+                "base_branch": base_branch,
+                "source_path": source_path,
+            },
+            proposed_diff={
+                "planner": {"status": "ready", "expected_sha": "a" * 40},
+                "files": [{"path": "app/page.tsx", "content": "<h1>Home</h1>"}],
+            },
+            rollback_plan={"required": True},
+        )
+
+    connection_id = uuid.uuid4()
+    first = _action_data(finding, patch_plan(connection_id))
+    remapped = _action_data(finding, patch_plan(uuid.uuid4()))
+    branch_changed = _action_data(
+        finding,
+        patch_plan(connection_id, base_branch="production"),
+    )
+    path_changed = _action_data(
+        finding,
+        patch_plan(connection_id, source_path="app/home/page.tsx"),
+    )
+    assert first is not None and remapped is not None
+    assert branch_changed is not None and path_changed is not None
+    assert len(
+        {
+            first.idempotency_key,
+            remapped.idempotency_key,
+            branch_changed.idempotency_key,
+            path_changed.idempotency_key,
+        }
+    ) == 4
+    assert len(first.idempotency_key or "") <= 128
+
 
 @pytest.mark.asyncio
 async def test_planner_builds_exact_reviewable_patch_without_persisting_token(monkeypatch) -> None:
@@ -90,8 +188,12 @@ async def test_planner_builds_exact_reviewable_patch_without_persisting_token(mo
     settings.github_patch_planning_enabled = True
     finding = _finding()
     route_source = (
-        'import { Hero } from "@/components/hero";\n'
-        'export default () => <Hero />;\n'
+        'import { Landing } from "@/components/landing";\n'
+        'export default () => <Landing />;\n'
+    )
+    section_source = (
+        'import { Hero } from "./hero";\n'
+        'export const Landing = () => <Hero />;\n'
     )
     source = 'export const Hero = () => <Image src="/hero.png" />;\n'
     generated = 'export default () => <Image src="/hero.png" alt="AI growth operator dashboard" />;\n'
@@ -151,6 +253,7 @@ async def test_planner_builds_exact_reviewable_patch_without_persisting_token(mo
                     "tree": [
                         {"type": "blob", "path": "backend/app/main.py"},
                         {"type": "blob", "path": "frontend/app/page.tsx"},
+                        {"type": "blob", "path": "frontend/components/landing.tsx"},
                         {"type": "blob", "path": "frontend/components/hero.tsx"},
                     ],
                 },
@@ -173,6 +276,16 @@ async def test_planner_builds_exact_reviewable_patch_without_persisting_token(mo
                     "sha": expected_sha,
                     "encoding": "base64",
                     "content": base64.b64encode(source.encode()).decode(),
+                },
+            )
+        if request.url.path.endswith("/contents/frontend/components/landing.tsx"):
+            return httpx.Response(
+                200,
+                json={
+                    "type": "file",
+                    "sha": "c" * 40,
+                    "encoding": "base64",
+                    "content": base64.b64encode(section_source.encode()).decode(),
                 },
             )
         raise AssertionError(f"Unexpected provider request: {request.method} {request.url}")

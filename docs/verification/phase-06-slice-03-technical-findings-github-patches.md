@@ -2,7 +2,7 @@
 
 ## Release boundary
 
-- API: `0.18.0`
+- API: `0.18.1`
 - Database migration: none; existing JSON action contracts store planning metadata
 - Input: one active crawl-backed Technical Finding affecting one URL
 - Output: either one exact, operator-reviewable GitHub full-file patch or an explicit simulation fallback
@@ -83,7 +83,7 @@ context, the planner must decline instead of inventing it.
 
 ## Deployment
 
-1. Deploy API `0.18.0` with `GITHUB_PATCH_PLANNING_ENABLED=false`.
+1. Deploy API `0.18.1` with `GITHUB_PATCH_PLANNING_ENABLED=false`.
 2. Confirm `/health` reports `github_patch_planning=disabled`.
 3. In **Settings → Integrations**, map a disposable GitHub App repository to a
    disposable site and confirm **Draft PR ready**.
@@ -136,6 +136,34 @@ context, the planner must decline instead of inventing it.
   expected blob SHA.
 - No generated action may target `.github/**`, `.env*`, keys, certificates,
   `wp-config.php`, dependencies, generated output or public assets.
+
+## Production stabilization checks (`0.18.1`)
+
+The planning flag does not rewrite actions that were created before repository
+planning metadata existed. Those immutable records now appear as **Legacy
+technical action** instead of the misleading **Simulation fallback** card.
+
+1. Open a legacy simulation action created before API `0.18.0`.
+2. Confirm **Queue execution** is unavailable and the page offers **Re-crawl &
+   refresh finding**.
+3. Open the linked site, select **Crawl Site**, wait for completion, then select
+   **Refresh findings**.
+4. If the finding is absent from the new crawl, confirm it becomes resolved and
+   the legacy action becomes **Cancelled**.
+5. If the finding still reproduces and maps to one exact repository source,
+   confirm a new **GitHub patch ready** action is created and the old action is
+   cancelled. Never expect the legacy action itself to change adapters.
+6. With more candidates than the per-refresh planning limit, refresh again and
+   confirm findings deferred by the first refresh are planned before previous
+   fallbacks are retried.
+7. Confirm an image-alt patch resolves every omitted `alt` attribute in the
+   selected source file; a partial repair must remain a fallback.
+8. Confirm a title patch leaves one static title between 20 and 60 characters.
+
+For `/terms` on `serpstrategists.com`, the current logo images use explicit
+`alt=""` plus `aria-hidden="true"`. They are decorative, so the correct result
+after a fresh crawl is a resolved finding and cancelled legacy action—not a
+GitHub patch.
 
 ## Rollback of the release
 
