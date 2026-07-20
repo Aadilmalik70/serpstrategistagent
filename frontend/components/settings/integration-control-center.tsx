@@ -61,6 +61,7 @@ type GitHubRepositoryStatus = {
   authorization_source: "public" | "github_app";
   authorization_ready: boolean;
   execution_ready: boolean;
+  patch_planning_ready: boolean;
 };
 
 type OAuthStart = { authorization_url: string };
@@ -80,6 +81,7 @@ type GitHubAppStatus = {
   configured: boolean;
   connected: boolean;
   execution_enabled: boolean;
+  patch_planning_enabled: boolean;
   installations: GitHubAppInstallation[];
 };
 type GitHubAuthorizedRepository = {
@@ -287,7 +289,7 @@ export default function IntegrationControlCenter() {
       form.reset();
       setShowGitHubMapping(false);
       await Promise.all([mutateGithub(), mutateAuthorizedRepositories()]);
-      setNotice("GitHub App repository authorization mapped to the selected site. Execution remains disabled.");
+      setNotice("GitHub App repository authorization mapped to the selected site. Check the rollout badges before planning or execution.");
     } catch (requestError) {
       showError(requestError);
     } finally {
@@ -510,7 +512,7 @@ export default function IntegrationControlCenter() {
               configured={Boolean(githubApp?.connected)}
               detail={
                 activeInstallations.length
-                  ? `${activeInstallations.length} App installation${activeInstallations.length === 1 ? "" : "s"} · ${githubApp?.execution_enabled ? "draft-PR execution enabled" : "execution rollout disabled"}`
+                  ? `${activeInstallations.length} App installation${activeInstallations.length === 1 ? "" : "s"} · ${githubApp?.patch_planning_enabled ? "AI patch planning enabled" : "patch planning disabled"}`
                   : githubApp?.configured
                     ? "Install the App to authorize repositories"
                     : "Configure the GitHub App on the backend"
@@ -709,6 +711,9 @@ export default function IntegrationControlCenter() {
                       <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${repository.execution_ready ? "bg-emerald-100 text-emerald-900" : "bg-[#f3f0e8] text-[#646464]"}`}>
                         {repository.execution_ready ? "Draft PR ready" : "Execution unavailable"}
                       </span>
+                      <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${repository.patch_planning_ready ? "bg-blue-100 text-blue-900" : "bg-[#f3f0e8] text-[#646464]"}`}>
+                        {repository.patch_planning_ready ? "Exact patch planning ready" : "Patch planning unavailable"}
+                      </span>
                     </div>
                     <p className="mt-1 text-sm text-[#646464]">{repository.repository}</p>
                     <p className="mt-2 text-xs text-[#8d8d8d]">{siteNames.get(repository.site_id) || "Site"} · {repository.visibility || "unknown visibility"} · {repository.default_branch || "default branch unknown"}</p>
@@ -739,6 +744,9 @@ export default function IntegrationControlCenter() {
                       <span className="rounded-full bg-[#2b9a66] px-2.5 py-1 text-[11px] font-semibold text-white">Authorized</span>
                       <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${githubApp?.execution_enabled ? "bg-emerald-100 text-emerald-900" : "bg-[#f3f0e8] text-[#646464]"}`}>
                         {githubApp?.execution_enabled ? "Governed draft PRs enabled" : "Execution rollout disabled"}
+                      </span>
+                      <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${githubApp?.patch_planning_enabled ? "bg-blue-100 text-blue-900" : "bg-[#f3f0e8] text-[#646464]"}`}>
+                        {githubApp?.patch_planning_enabled ? "AI patch planner enabled" : "Patch planning disabled"}
                       </span>
                     </div>
                     <p className="mt-1 text-sm text-[#646464]">{installation.account_type} · {installation.repository_selection} repositories</p>

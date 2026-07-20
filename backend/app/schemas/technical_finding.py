@@ -36,6 +36,10 @@ class TechnicalFindingResponse(BaseModel):
     resolved_at: datetime | None
     action_id: uuid.UUID | None = None
     action_status: str | None = None
+    action_adapter: str | None = None
+    patch_status: str | None = None
+    patch_reason: str | None = None
+    patch_source_path: str | None = None
 
 
 class TechnicalFindingQueueResponse(BaseModel):

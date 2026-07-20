@@ -94,6 +94,21 @@ points to the governed commit. Rollback closes the unmerged PR and deletes only
 an unchanged action branch. Autonomous merge and merged-PR rollback remain
 human-controlled.
 
+Repository-aware Technical Finding patches are separately gated by
+`GITHUB_PATCH_PLANNING_ENABLED=false`. When enabled, the planner resolves one
+affected URL to one unambiguous source file in the mapped repository. For image
+alt findings it follows a bounded local-import graph so route components can be
+resolved without sending the whole repository to AI. Only the selected bounded
+UTF-8 file plus finding evidence is sent to the server-managed AI gateway.
+Only a complete full-file replacement that passes finding-specific
+postconditions and review-size limits becomes a GitHub action. Ambiguous routes,
+unsupported findings, unavailable providers, and invalid patches stay on the
+simulation adapter with a visible fallback reason. Existing active simulation
+actions are cancelled only after a replacement GitHub patch action is safely
+stored; every GitHub patch still requires explicit operator approval.
+The authoritative crawler now distinguishes a missing `alt` attribute from an
+intentional empty `alt=""`, so decorative images do not generate false actions.
+
 ### Frontend
 
 ```bash

@@ -67,6 +67,7 @@ async def github_app_status(
         configured=github_app_configured(),
         connected=any(item.status == "active" for item in installations),
         execution_enabled=settings.github_execution_enabled,
+        patch_planning_enabled=settings.github_patch_planning_enabled,
         installations=[_installation_response(item) for item in installations],
     )
 

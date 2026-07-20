@@ -24,6 +24,7 @@ class GitHubAppStatusResponse(BaseModel):
     configured: bool
     connected: bool
     execution_enabled: bool = False
+    patch_planning_enabled: bool = False
     installations: list[GitHubAppInstallationResponse]
 
 

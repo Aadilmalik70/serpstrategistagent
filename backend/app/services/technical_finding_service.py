@@ -9,12 +9,15 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.crawl_snapshot import CrawlSnapshot
 from app.models.issue import Issue
-from app.models.operator_action import OperatorAction
+from app.models.operator_action import OperatorAction, OperatorActionEvent
 from app.models.page import Page
 from app.models.site import Site
 from app.schemas.operator_action import OperatorActionCreate
+from app.services import github_patch_planner
+from app.services.github_patch_planner import PLANNER_VERSION, RepositoryPatchPlan
 from app.services.operator_action_service import cancel_action, create_action, propose_action
 
 
@@ -563,12 +566,47 @@ async def reconcile_findings(
     return counts, actionable, resolved
 
 
-def _action_data(finding: Issue) -> OperatorActionCreate | None:
+def _action_data(
+    finding: Issue,
+    patch_plan: RepositoryPatchPlan | None = None,
+) -> OperatorActionCreate | None:
     action_config = (finding.meta or {}).get("action") or {}
     action_type = action_config.get("action_type")
     if not action_type:
         return None
     affected_urls = list(finding.affected_urls or ([finding.affected_url] if finding.affected_url else []))
+    affected_pages = len(affected_urls)
+    execution_target = dict(action_config.get("execution_target") or {"adapter": "simulation"})
+    proposed_diff: dict[str, Any] = {
+        "summary": finding.recommendation,
+        "affected_pages": affected_pages,
+        "affected_urls": affected_urls,
+        "mode": "simulation_until_exact_patch_ready",
+        "planner": {
+            "status": patch_plan.status if patch_plan else "fallback",
+            "version": PLANNER_VERSION,
+            "reason_code": patch_plan.reason_code if patch_plan else "planning_not_attempted",
+            "reason": patch_plan.reason if patch_plan else "Repository patch planning was not attempted.",
+        },
+    }
+    rollback_plan: dict[str, Any] = {
+        "strategy": "restore_before_snapshot",
+        "required": True,
+        "note": "Simulation actions do not mutate the mapped repository.",
+    }
+    if patch_plan and patch_plan.ready:
+        execution_target = dict(patch_plan.execution_target)
+        proposed_diff = dict(patch_plan.proposed_diff)
+        rollback_plan = dict(patch_plan.rollback_plan)
+
+    idempotency_key = f"finding:{finding.fingerprint}:r{finding.regression_count}"
+    if patch_plan and patch_plan.ready:
+        planner = proposed_diff.get("planner") if isinstance(proposed_diff.get("planner"), dict) else {}
+        expected_sha = str(planner.get("expected_sha") or "")[:12]
+        idempotency_key = (
+            f"finding:{finding.fingerprint}:r{finding.regression_count}:github:{expected_sha}"
+        )
+
     return OperatorActionCreate(
         site_id=finding.site_id,
         issue_id=finding.id,
@@ -601,18 +639,9 @@ def _action_data(finding: Issue) -> OperatorActionCreate | None:
         confidence_score=finding.confidence_score,
         effort_score=finding.effort_score,
         risk_score=int(action_config.get("risk_score") or 0),
-        execution_target=dict(action_config.get("execution_target") or {"adapter": "simulation"}),
-        proposed_diff={
-            "summary": finding.recommendation,
-            "affected_pages": len(affected_urls),
-            "affected_urls": affected_urls,
-            "mode": "simulation_until_adapter_enabled",
-        },
-        rollback_plan={
-            "strategy": "restore_before_snapshot",
-            "required": True,
-            "note": "Real adapters remain disabled; execution is simulation-only in this slice.",
-        },
+        execution_target=execution_target,
+        proposed_diff=proposed_diff,
+        rollback_plan=rollback_plan,
         measurement_plan={
             "windows_days": [7, 14, 30],
             "metrics": ["finding_status", "indexed_pages", "clicks", "impressions", "ctr"],
@@ -624,8 +653,78 @@ def _action_data(finding: Issue) -> OperatorActionCreate | None:
             "indexability and canonical intent remain valid",
             "the build or CMS validation succeeds before shipment",
         ],
-        idempotency_key=f"finding:{finding.fingerprint}:r{finding.regression_count}",
+        idempotency_key=idempotency_key,
     )
+
+
+async def _cancel_superseded_simulation_actions(
+    db: AsyncSession,
+    *,
+    workspace_id: uuid.UUID,
+    finding: Issue,
+    keep_action_id: uuid.UUID,
+) -> None:
+    previous_actions = list((await db.execute(
+        select(OperatorAction).where(
+            OperatorAction.workspace_id == workspace_id,
+            OperatorAction.issue_id == finding.id,
+            OperatorAction.id != keep_action_id,
+            OperatorAction.status.in_(["draft", "needs_approval", "approved"]),
+        )
+    )).scalars().all())
+    for previous in previous_actions:
+        adapter = str((previous.execution_target or {}).get("adapter") or "").strip().lower()
+        if adapter != "simulation":
+            continue
+        await cancel_action(
+            db,
+            workspace_id=workspace_id,
+            user_id=None,
+            action_id=previous.id,
+            expected_version=previous.version,
+        )
+
+
+async def _refresh_simulation_fallback_metadata(
+    db: AsyncSession,
+    *,
+    workspace_id: uuid.UUID,
+    action: OperatorAction,
+    data: OperatorActionCreate,
+) -> None:
+    adapter = str((action.execution_target or {}).get("adapter") or "").strip().lower()
+    if adapter != "simulation" or action.status not in {"draft", "needs_approval", "approved"}:
+        return
+    proposed_diff = data.proposed_diff or {}
+    rollback_plan = data.rollback_plan or {}
+    if action.proposed_diff == proposed_diff and action.rollback_plan == rollback_plan:
+        return
+
+    action.proposed_diff = proposed_diff
+    action.rollback_plan = rollback_plan
+    action.version += 1
+    planner = proposed_diff.get("planner") if isinstance(proposed_diff, dict) else {}
+    if not isinstance(planner, dict):
+        planner = {}
+    db.add(
+        OperatorActionEvent(
+            action_id=action.id,
+            workspace_id=workspace_id,
+            site_id=action.site_id,
+            event_type="action_plan_refreshed",
+            from_status=action.status,
+            to_status=action.status,
+            actor_user_id=None,
+            actor_type="system",
+            payload={
+                "adapter": "simulation",
+                "planner_status": planner.get("status"),
+                "reason_code": planner.get("reason_code"),
+            },
+        )
+    )
+    await db.commit()
+    await db.refresh(action)
 
 
 async def ensure_action_for_finding(
@@ -634,8 +733,21 @@ async def ensure_action_for_finding(
     workspace_id: uuid.UUID,
     finding: Issue,
     actor_user_id: uuid.UUID | None,
+    allow_github_planning: bool = True,
 ) -> tuple[OperatorAction | None, bool]:
-    data = _action_data(finding)
+    patch_plan = (
+        await github_patch_planner.plan_patch_for_finding(
+            db,
+            workspace_id=workspace_id,
+            finding=finding,
+        )
+        if allow_github_planning
+        else RepositoryPatchPlan.fallback(
+            "github_planning_budget_exhausted",
+            "This refresh reached the configured repository-planning limit.",
+        )
+    )
+    data = _action_data(finding, patch_plan)
     if data is None:
         return None, False
     existing = await db.scalar(
@@ -645,6 +757,20 @@ async def ensure_action_for_finding(
         )
     )
     if existing:
+        if patch_plan.ready:
+            await _cancel_superseded_simulation_actions(
+                db,
+                workspace_id=workspace_id,
+                finding=finding,
+                keep_action_id=existing.id,
+            )
+        else:
+            await _refresh_simulation_fallback_metadata(
+                db,
+                workspace_id=workspace_id,
+                action=existing,
+                data=data,
+            )
         return existing, False
     action = await create_action(
         db,
@@ -659,6 +785,13 @@ async def ensure_action_for_finding(
         action_id=action.id,
         expected_version=action.version,
     )
+    if patch_plan.ready:
+        await _cancel_superseded_simulation_actions(
+            db,
+            workspace_id=workspace_id,
+            finding=finding,
+            keep_action_id=action.id,
+        )
     return action, True
 
 
@@ -708,12 +841,19 @@ async def run_technical_finding_pipeline(
                 Issue.status.in_(ACTIVE_FINDING_STATUSES),
             )
         )).scalars().all())
+        planning_attempts = 0
+        planning_limit = get_settings().github_patch_planning_max_actions_per_refresh
         for finding in active_findings:
+            planning_candidate = github_patch_planner.is_patch_planning_candidate(finding)
+            allow_github_planning = not planning_candidate or planning_attempts < planning_limit
+            if planning_candidate and allow_github_planning:
+                planning_attempts += 1
             action, created = await ensure_action_for_finding(
                 db,
                 workspace_id=site.workspace_id,
                 finding=finding,
                 actor_user_id=actor_user_id,
+                allow_github_planning=allow_github_planning,
             )
             if action:
                 action_ids.append(action.id)

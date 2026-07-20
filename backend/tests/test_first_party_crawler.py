@@ -81,7 +81,7 @@ def test_html_parser_extracts_visible_metadata() -> None:
         </head><body>
           <h1>Grow organic traffic</h1><h2>Evidence</h2>
           <p>Visible words should be counted.</p>
-          <a href="/about">About</a><img src="hero.png" alt="">
+          <a href="/about">About</a><img src="hero.png" alt=""><img src="missing.png">
         </body></html>
         """
     )
@@ -90,6 +90,8 @@ def test_html_parser_extracts_visible_metadata() -> None:
     assert parser.headings("h1") == ["Grow organic traffic"]
     assert parser.canonical == "https://example.com/growth"
     assert parser.links == ["/about"]
+    assert parser.images[0]["has_alt"] is True
+    assert parser.images[1]["has_alt"] is False
     assert parser.json_ld_count == 1
     assert parser.word_count >= 5
 
@@ -120,6 +122,8 @@ def test_first_party_crawl_discovers_pages_and_persists_progress(monkeypatch) ->
                   <link rel="canonical" href="/">
                 </head><body>
                   <h1>Home</h1>
+                  <img src="decorative.svg" alt="" aria-hidden="true">
+                  <img src="missing-alt.png">
                   <a href="/about?utm_source=test">About</a>
                   <a href="/private">Private</a>
                   <a href="https://external.example.org/page">External</a>
@@ -175,6 +179,8 @@ def test_first_party_crawl_discovers_pages_and_persists_progress(monkeypatch) ->
         assert homepage["canonical_url"].endswith("/")
         assert homepage["meta"]["internal_links_count"] == 2
         assert homepage["meta"]["external_links_count"] == 1
+        assert homepage["meta"]["images_count"] == 2
+        assert homepage["meta"]["images_without_alt"] == 1
 
         latest = client.get(f"/crawl/site/{site_id}/latest", headers=_headers(owner))
         assert latest.status_code == 200

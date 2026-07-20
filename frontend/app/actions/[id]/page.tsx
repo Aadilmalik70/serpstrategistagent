@@ -242,6 +242,9 @@ export default function OperatorActionDetailPage() {
   }
 
   const adapter = String(action.execution_target.adapter || action.execution_target.provider || action.execution_target.type || "not configured");
+  const patchPlanner = recordValue(action.proposed_diff.planner);
+  const patchFiles = Array.isArray(action.proposed_diff.files) ? action.proposed_diff.files : [];
+  const exactPatchReady = adapter === "github" && patchPlanner.status === "ready" && patchFiles.length > 0;
   const activeJob = jobs?.find((job) => ["queued", "running", "retry_wait"].includes(job.status));
   const executionEnvelope = recordValue(action.execution_result?.execution);
   const providerExecution = recordValue(executionEnvelope.execution);
@@ -304,6 +307,25 @@ export default function OperatorActionDetailPage() {
             </div>
           </section>
         )}
+
+        <section className={`mt-5 rounded-[20px] border p-5 sm:p-6 ${exactPatchReady ? "border-emerald-200 bg-emerald-50" : "border-[rgba(32,32,32,0.12)] bg-white"}`}>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#646464]">Repository patch plan</p>
+          <div className="mt-2 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold tracking-[-0.03em]">{exactPatchReady ? "Exact GitHub patch ready for review" : "Simulation fallback"}</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-[#575757]">
+                {exactPatchReady
+                  ? `The planner resolved ${String(patchPlanner.source_path || action.execution_target.source_path || "one source file")} and produced ${String(patchPlanner.changed_lines || "a bounded number of")} changed lines. Review the complete replacement content below before approval.`
+                  : String(patchPlanner.reason || "No exact repository patch was produced for this action.")}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="rounded-full bg-white px-3 py-1.5 font-semibold">{adapter}</span>
+              {Boolean(patchPlanner.model) && <span className="rounded-full bg-white px-3 py-1.5">{String(patchPlanner.model)}</span>}
+              {patchFiles.length > 0 && <span className="rounded-full bg-white px-3 py-1.5">{patchFiles.length} file{patchFiles.length === 1 ? "" : "s"}</span>}
+            </div>
+          </div>
+        </section>
 
         <section className="mt-5 rounded-[20px] border border-[rgba(32,32,32,0.12)] bg-white p-5 sm:p-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">

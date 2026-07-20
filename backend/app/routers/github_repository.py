@@ -26,6 +26,18 @@ def _execution_ready(installation: GitHubAppInstallation | None) -> bool:
     )
 
 
+def _patch_planning_ready(installation: GitHubAppInstallation | None) -> bool:
+    settings = get_settings()
+    if installation is None or not settings.github_patch_planning_enabled:
+        return False
+    permissions = installation.permissions or {}
+    return bool(
+        settings.ai_gateway_api_key
+        and permissions.get("contents") == "write"
+        and permissions.get("pull_requests") == "write"
+    )
+
+
 @router.get("/{site_id}", response_model=GitHubRepositoryResponse)
 async def github_repository_status(
     site_id: uuid.UUID,
@@ -64,6 +76,7 @@ async def github_repository_status(
         authorization_source="github_app" if installation else "public",
         authorization_ready=bool(installation),
         execution_ready=_execution_ready(installation),
+        patch_planning_ready=_patch_planning_ready(installation),
     )
 
 
@@ -92,6 +105,11 @@ async def connect_github_repository(
                 status_code=exc.status_code,
                 detail={"code": exc.code, "message": str(exc), "retryable": exc.retryable},
             ) from exc
+        installation = (
+            await db.get(GitHubAppInstallation, connection.installation_id)
+            if connection.installation_id
+            else None
+        )
         return GitHubRepositoryResponse(
             site_id=site.id,
             repository=connection.repository_full_name,
@@ -102,11 +120,8 @@ async def connect_github_repository(
             repository_id=connection.github_repository_id,
             authorization_source="github_app",
             authorization_ready=True,
-            execution_ready=_execution_ready(
-                await db.get(GitHubAppInstallation, connection.installation_id)
-                if connection.installation_id
-                else None
-            ),
+            execution_ready=_execution_ready(installation),
+            patch_planning_ready=_patch_planning_ready(installation),
         )
 
     if not data.repository:
@@ -184,6 +199,7 @@ async def connect_github_repository(
         authorization_source="public",
         authorization_ready=False,
         execution_ready=False,
+        patch_planning_ready=False,
     )
 
 

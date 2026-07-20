@@ -7,6 +7,7 @@ from app.main import app
 from app.services import first_party_crawler as crawler
 from app.services.crawl_job_service import run_crawl_worker_tick
 from app.services.first_party_crawler import FetchResult
+from app.services.github_patch_planner import RepositoryPatchPlan
 
 
 PASSWORD = "correct-horse-battery-staple"
@@ -183,6 +184,177 @@ def test_findings_are_reconciled_and_regressions_create_new_governed_actions(mon
             headers=_headers(outsider),
         )
         assert outsider_read.status_code == 404
+
+
+def test_exact_github_patch_supersedes_active_simulation_action(monkeypatch) -> None:
+    suffix = uuid.uuid4().hex
+    domain = f"patch-ready-{suffix}.example.com"
+    planning = {"ready": False, "reason": "No exact source file was available yet."}
+
+    async def fake_fetch(client, url: str, **kwargs):
+        del client, kwargs
+        path = urlsplit(url).path
+        if path == "/robots.txt":
+            return _result(url, "User-agent: *\nSitemap: /sitemap.xml\n", "text/plain")
+        if path == "/sitemap.xml":
+            return _result(url, "<urlset></urlset>", "application/xml")
+        if path == "/":
+            useful = "useful original product information " * 55
+            return _result(
+                url,
+                "<html><head><title>Evidence-led organic search growth operator</title>"
+                "<meta name='description' content='A complete description of a governed organic search growth operator for technical teams.'>"
+                "<meta name='viewport' content='width=device-width'>"
+                "<link rel='canonical' href='/'>"
+                "<script type='application/ld+json'>{}</script></head>"
+                f"<body><h1>Organic search growth operator</h1><img src='/hero.png'><p>{useful}</p></body></html>",
+            )
+        raise AssertionError(f"Unexpected URL {url}")
+
+    async def fake_plan(_db, *, finding, **_kwargs):
+        if finding.finding_type != "images_missing_alt" or not planning["ready"]:
+            return RepositoryPatchPlan.fallback(
+                "source_file_not_resolved",
+                planning["reason"],
+            )
+        return RepositoryPatchPlan(
+            status="ready",
+            reason_code="exact_patch_ready",
+            reason="Exact patch ready.",
+            execution_target={
+                "adapter": "github",
+                "base_branch": "main",
+                "repository": "operator/site",
+                "source_path": "frontend/app/page.tsx",
+                "planner": "repository-ai-v1",
+            },
+            proposed_diff={
+                "summary": "Add contextual hero image alt text",
+                "affected_pages": 1,
+                "affected_urls": ["/"],
+                "mode": "exact_github_patch",
+                "commit_message": "Fix homepage image alternative text",
+                "planner": {
+                    "status": "ready",
+                    "version": "repository-ai-v1",
+                    "source_path": "frontend/app/page.tsx",
+                    "expected_sha": "b" * 40,
+                    "changed_lines": 2,
+                    "model": "test-model",
+                },
+                "files": [
+                    {
+                        "path": "frontend/app/page.tsx",
+                        "operation": "update",
+                        "content": '<Image src="/hero.png" alt="AI growth operator dashboard" />\n',
+                        "expected_sha": "b" * 40,
+                    }
+                ],
+            },
+            rollback_plan={
+                "strategy": "close_draft_pr_and_delete_unchanged_branch",
+                "required": True,
+            },
+        )
+
+    monkeypatch.setattr(crawler, "_fetch_url", fake_fetch)
+    monkeypatch.setattr(
+        "app.services.github_patch_planner.plan_patch_for_finding",
+        fake_plan,
+    )
+
+    with TestClient(app) as client:
+        owner = _register(client, f"patch-owner-{suffix}@example.com", "Patch Owner")
+        headers = _headers(owner)
+        site = client.post(
+            "/sites",
+            headers=headers,
+            json={"domain": domain, "name": "Patch Test Site"},
+        )
+        assert site.status_code == 201, site.text
+        site_id = site.json()["id"]
+
+        crawl = client.post(
+            "/crawl/site",
+            headers=headers,
+            json={"site_id": site_id, "max_pages": 5},
+        )
+        assert crawl.status_code == 202, crawl.text
+        assert client.portal is not None
+        client.portal.call(run_crawl_worker_tick, uuid.UUID(crawl.json()["job_id"]))
+
+        first = client.post(
+            f"/technical-findings/sites/{site_id}/refresh",
+            headers=headers,
+        )
+        assert first.status_code == 200, first.text
+        findings = client.get(
+            f"/technical-findings/sites/{site_id}?status=active",
+            headers=headers,
+        ).json()["items"]
+        image_finding = next(item for item in findings if item["finding_type"] == "images_missing_alt")
+        simulation_action_id = image_finding["action_id"]
+        assert image_finding["action_adapter"] == "simulation"
+        assert image_finding["patch_status"] == "fallback"
+
+        planning["reason"] = "The affected URL still maps to multiple source files."
+        fallback_refresh = client.post(
+            f"/technical-findings/sites/{site_id}/refresh",
+            headers=headers,
+        )
+        assert fallback_refresh.status_code == 200, fallback_refresh.text
+        fallback_items = client.get(
+            f"/technical-findings/sites/{site_id}?status=active",
+            headers=headers,
+        ).json()["items"]
+        refreshed_fallback = next(
+            item for item in fallback_items if item["finding_type"] == "images_missing_alt"
+        )
+        assert refreshed_fallback["action_id"] == simulation_action_id
+        assert refreshed_fallback["patch_reason"] == planning["reason"]
+        simulation_detail = client.get(
+            f"/operator-actions/{simulation_action_id}",
+            headers=headers,
+        )
+        assert simulation_detail.status_code == 200, simulation_detail.text
+        assert any(
+            event["event_type"] == "action_plan_refreshed"
+            for event in simulation_detail.json()["events"]
+        )
+
+        planning["ready"] = True
+        refreshed = client.post(
+            f"/technical-findings/sites/{site_id}/refresh",
+            headers=headers,
+        )
+        assert refreshed.status_code == 200, refreshed.text
+        assert refreshed.json()["actions_created"] >= 1
+
+        upgraded_findings = client.get(
+            f"/technical-findings/sites/{site_id}?status=active",
+            headers=headers,
+        ).json()["items"]
+        upgraded = next(item for item in upgraded_findings if item["finding_type"] == "images_missing_alt")
+        assert upgraded["action_id"] != simulation_action_id
+        assert upgraded["action_adapter"] == "github"
+        assert upgraded["patch_status"] == "ready"
+        assert upgraded["patch_source_path"] == "frontend/app/page.tsx"
+
+        github_action = client.get(
+            f"/operator-actions/{upgraded['action_id']}",
+            headers=headers,
+        )
+        assert github_action.status_code == 200, github_action.text
+        assert github_action.json()["status"] == "needs_approval"
+        assert github_action.json()["approval_policy"]["mode"] == "manual_approval"
+        assert github_action.json()["proposed_diff"]["files"][0]["expected_sha"] == "b" * 40
+
+        superseded = client.get(
+            f"/operator-actions/{simulation_action_id}",
+            headers=headers,
+        )
+        assert superseded.status_code == 200, superseded.text
+        assert superseded.json()["status"] == "cancelled"
 
 
 def test_legacy_rejection_keeps_cors_headers() -> None:

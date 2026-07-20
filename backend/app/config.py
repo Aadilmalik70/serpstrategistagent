@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     github_execution_max_files: int = 20
     github_execution_max_file_bytes: int = 262_144
     github_execution_max_total_bytes: int = 1_048_576
+    # Repository source is sent to the configured server-side AI gateway only
+    # when this explicit planning gate is enabled. Generated full-file patches
+    # still require operator approval before the GitHub adapter may execute.
+    github_patch_planning_enabled: bool = False
+    github_patch_planning_max_actions_per_refresh: int = 3
+    github_patch_planning_max_tree_entries: int = 5_000
+    github_patch_planning_max_source_files: int = 25
+    github_patch_planning_max_candidate_bytes: int = 65_536
+    github_patch_planning_max_changed_lines: int = 200
 
     wordpress_url: str = ""
     wordpress_user: str = ""
@@ -217,6 +226,20 @@ class Settings(BaseSettings):
             or self.crawler_render_timeout_seconds <= 0
         ):
             raise ValueError("Provider and crawler timeouts must be greater than zero")
+        if (
+            self.github_patch_planning_max_actions_per_refresh <= 0
+            or self.github_patch_planning_max_tree_entries <= 0
+            or self.github_patch_planning_max_source_files <= 0
+            or self.github_patch_planning_max_candidate_bytes <= 0
+            or self.github_patch_planning_max_changed_lines <= 0
+        ):
+            raise ValueError("GitHub patch planning limits must be greater than zero")
+        if self.github_patch_planning_enabled and not all(github_app_values):
+            raise ValueError(
+                "GitHub patch planning requires GITHUB_APP_ID, GITHUB_APP_SLUG, and GITHUB_APP_PRIVATE_KEY_BASE64"
+            )
+        if self.github_patch_planning_enabled and not self.ai_gateway_api_key:
+            raise ValueError("GitHub patch planning requires AI_GATEWAY_API_KEY")
         if self.github_execution_enabled and not all(github_app_values):
             raise ValueError(
                 "GitHub execution requires GITHUB_APP_ID, GITHUB_APP_SLUG, and GITHUB_APP_PRIVATE_KEY_BASE64"

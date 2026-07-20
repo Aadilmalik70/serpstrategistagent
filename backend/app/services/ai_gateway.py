@@ -69,7 +69,7 @@ def _request_parts(
         return (
             "chat/completions",
             {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            {"model": model, "messages": messages},
+            {"model": model, "messages": messages, "max_tokens": max_tokens},
         )
     if endpoint == "messages":
         if not messages:
