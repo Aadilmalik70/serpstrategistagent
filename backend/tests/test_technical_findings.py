@@ -240,6 +240,7 @@ def test_exact_github_patch_supersedes_active_simulation_action(monkeypatch) -> 
             return RepositoryPatchPlan.fallback(
                 "source_file_not_resolved",
                 planning["reason"],
+                model="posiden/deepseek-v4-flash",
             )
         return RepositoryPatchPlan(
             status="ready",
@@ -320,6 +321,7 @@ def test_exact_github_patch_supersedes_active_simulation_action(monkeypatch) -> 
         simulation_action_id = image_finding["action_id"]
         assert image_finding["action_adapter"] == "simulation"
         assert image_finding["patch_status"] == "fallback"
+        assert image_finding["patch_model"] == "posiden/deepseek-v4-flash"
 
         planning["reason"] = "The affected URL still maps to multiple source files."
         fallback_refresh = client.post(

@@ -223,7 +223,9 @@ def test_exact_patch_idempotency_is_scoped_to_repository_mapping() -> None:
 async def test_planner_builds_exact_reviewable_patch_without_persisting_token(monkeypatch) -> None:
     settings = get_settings()
     previous_enabled = settings.github_patch_planning_enabled
+    previous_model = settings.github_patch_planning_model
     settings.github_patch_planning_enabled = True
+    settings.github_patch_planning_model = "posiden/deepseek-v4-flash"
     finding = _finding()
     route_source = (
         'import { Landing } from "@/components/landing";\n'
@@ -252,6 +254,7 @@ async def test_planner_builds_exact_reviewable_patch_without_persisting_token(mo
         return "ephemeral-planner-token"
 
     async def fake_ai(**kwargs) -> AIGatewayResult:
+        assert kwargs["model"] == "posiden/deepseek-v4-flash"
         prompt = kwargs["messages"][1]["content"]
         assert "BEGIN UNTRUSTED SOURCE" in prompt
         assert source.strip() in prompt
@@ -340,8 +343,10 @@ async def test_planner_builds_exact_reviewable_patch_without_persisting_token(mo
             )
     finally:
         settings.github_patch_planning_enabled = previous_enabled
+        settings.github_patch_planning_model = previous_model
 
     assert result.ready is True
+    assert result.model == "test-model"
     assert result.execution_target["adapter"] == "github"
     assert result.execution_target["source_path"] == "frontend/components/hero.tsx"
     assert result.proposed_diff["mode"] == "exact_github_patch"
@@ -354,4 +359,39 @@ async def test_planner_builds_exact_reviewable_patch_without_persisting_token(mo
         }
     ]
     assert result.proposed_diff["planner"]["changed_lines"] == 2
+    assert result.proposed_diff["planner"]["model"] == "test-model"
     assert "ephemeral-planner-token" not in repr(result)
+
+
+def test_fallback_action_records_the_model_that_returned_the_rejected_patch() -> None:
+    finding = SimpleNamespace(
+        id=uuid.uuid4(),
+        site_id=uuid.uuid4(),
+        finding_type="title_too_short",
+        fingerprint="f" * 64,
+        regression_count=0,
+        category="technical",
+        title="Title tag is shorter than 20 characters",
+        description="The rendered title is too short.",
+        recommendation="Make the title more descriptive.",
+        affected_url="/terms",
+        affected_urls=["/terms"],
+        evidence=[{"type": "crawl_observation", "observed": {"title": "X"}}],
+        impact_score=30,
+        confidence_score=95,
+        effort_score=15,
+        detector_version="first-party-v1",
+        status="open",
+        meta={"action": {"action_type": "metadata_update", "risk_score": 10}},
+    )
+    action = _action_data(
+        finding,
+        planner.RepositoryPatchPlan.fallback(
+            "github_planner_postcondition_failed",
+            "The generated patch did not resolve the title defect.",
+            model="posiden/deepseek-v4-flash",
+        ),
+    )
+
+    assert action is not None
+    assert action.proposed_diff["planner"]["model"] == "posiden/deepseek-v4-flash"

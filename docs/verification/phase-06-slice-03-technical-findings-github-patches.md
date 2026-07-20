@@ -2,7 +2,7 @@
 
 ## Release boundary
 
-- API: `0.18.2`
+- API: `0.18.3`
 - Database migration: none; existing JSON action contracts store planning metadata
 - Input: one active crawl-backed Technical Finding affecting one URL
 - Output: either one exact, operator-reviewable GitHub full-file patch or an explicit simulation fallback
@@ -18,6 +18,7 @@ GITHUB_APP_ID=<app-id>
 GITHUB_APP_SLUG=<app-slug>
 GITHUB_APP_PRIVATE_KEY_BASE64=<complete-private-key-pem-as-base64>
 GITHUB_PATCH_PLANNING_ENABLED=true
+GITHUB_PATCH_PLANNING_MODEL=posiden/deepseek-v4-flash
 ```
 
 Draft-PR execution remains a separate rollout:
@@ -83,15 +84,16 @@ context, the planner must decline instead of inventing it.
 
 ## Deployment
 
-1. Deploy API `0.18.2` with `GITHUB_PATCH_PLANNING_ENABLED=false`.
+1. Deploy API `0.18.3` with `GITHUB_PATCH_PLANNING_ENABLED=false`.
 2. Confirm `/health` reports `github_patch_planning=disabled`.
 3. In **Settings → Integrations**, map a disposable GitHub App repository to a
    disposable site and confirm **Draft PR ready**.
 4. Confirm the AI gateway data-sharing boundary is approved for that repository.
 5. Set `GITHUB_PATCH_PLANNING_ENABLED=true` on every service that can run the
    Technical Finding pipeline, then redeploy together.
-6. Confirm `/health` reports `github_patch_planning=enabled` and Settings shows
-   **Exact patch planning ready**.
+6. Confirm `/health` reports `github_patch_planning=enabled`,
+   `github_patch_model=posiden/deepseek-v4-flash`, and Settings shows **Exact
+   patch planning ready**.
 
 ## Manual UI test — upgrade the existing simulation action
 
@@ -172,6 +174,14 @@ the source title literal can be shorter than 20 characters while the rendered
 title is valid. Title-patch validation uses the crawl-observed rendered title
 to preserve that affix and evaluates the predicted rendered result against the
 same 20–60 character detector boundary.
+
+### Dedicated patch-planning model (`0.18.3`)
+
+Repository patch planning explicitly requests `GITHUB_PATCH_PLANNING_MODEL`,
+which defaults to `posiden/deepseek-v4-flash`, instead of inheriting a possibly
+overridden general-purpose primary model. `/health` exposes the configured
+planner model. Ready and postcondition-fallback actions record the model that
+actually returned the AI response, and the Technical Findings UI displays it.
 
 ## Rollback of the release
 

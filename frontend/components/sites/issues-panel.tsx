@@ -33,6 +33,7 @@ type Finding = {
   patch_status: string | null;
   patch_reason: string | null;
   patch_source_path: string | null;
+  patch_model: string | null;
 };
 
 type FindingQueue = {
@@ -238,6 +239,7 @@ export default function IssuesPanel({ siteId, site }: { siteId: string; site?: S
                       {finding.action_adapter === "github" ? "GitHub patch ready" : "Simulation fallback"}
                     </span>
                     {finding.patch_source_path && <span className="rounded bg-white/70 px-2 py-0.5 font-mono text-xs">{finding.patch_source_path}</span>}
+                    {finding.patch_model && <span className="rounded bg-white/70 px-2 py-0.5 font-mono text-xs">Model: {finding.patch_model}</span>}
                   </div>
                   {finding.action_adapter !== "github" && finding.patch_reason && <p className="mt-1 text-xs">{finding.patch_reason}</p>}
                 </div>

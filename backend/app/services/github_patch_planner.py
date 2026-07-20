@@ -76,6 +76,7 @@ class RepositoryPatchPlan:
     status: str
     reason_code: str
     reason: str
+    model: str | None = None
     execution_target: dict[str, Any] = field(default_factory=dict)
     proposed_diff: dict[str, Any] = field(default_factory=dict)
     rollback_plan: dict[str, Any] = field(default_factory=dict)
@@ -85,8 +86,14 @@ class RepositoryPatchPlan:
         return self.status == "ready"
 
     @classmethod
-    def fallback(cls, reason_code: str, reason: str) -> "RepositoryPatchPlan":
-        return cls(status="fallback", reason_code=reason_code, reason=reason)
+    def fallback(
+        cls,
+        reason_code: str,
+        reason: str,
+        *,
+        model: str | None = None,
+    ) -> "RepositoryPatchPlan":
+        return cls(status="fallback", reason_code=reason_code, reason=reason, model=model)
 
 
 class GitHubPatchPlanningError(RuntimeError):
@@ -834,6 +841,7 @@ async def plan_patch_for_finding(
             "The resolved source file exceeds the configured AI planning limit.",
         )
 
+    ai_result: AIGatewayResult | None = None
     try:
         ai_result = await request_ai(
             workspace_id=workspace_id,
@@ -848,6 +856,7 @@ async def plan_patch_for_finding(
                 source_path=source_path,
                 source=source,
             ),
+            model=settings.github_patch_planning_model,
             max_tokens=16_384,
             client=ai_client,
             db=db,
@@ -855,7 +864,11 @@ async def plan_patch_for_finding(
         payload = _json_payload(_response_text(ai_result))
         if payload.get("can_patch") is not True:
             reason = str(payload.get("summary") or "The source change was ambiguous.")[:500]
-            return RepositoryPatchPlan.fallback("github_planner_declined", reason)
+            return RepositoryPatchPlan.fallback(
+                "github_planner_declined",
+                reason,
+                model=ai_result.model,
+            )
         generated = payload.get("content")
         if not isinstance(generated, str):
             raise GitHubPatchPlanningError(
@@ -875,7 +888,11 @@ async def plan_patch_for_finding(
             str(exc),
         )
     except GitHubPatchPlanningError as exc:
-        return RepositoryPatchPlan.fallback(exc.code, str(exc))
+        return RepositoryPatchPlan.fallback(
+            exc.code,
+            str(exc),
+            model=ai_result.model if ai_result else None,
+        )
 
     summary = str(payload.get("summary") or finding.recommendation or finding.title).strip()[:500]
     notes = payload.get("validation_notes")
@@ -894,6 +911,7 @@ async def plan_patch_for_finding(
         status="ready",
         reason_code="exact_patch_ready",
         reason="An exact repository patch is ready for operator review.",
+        model=ai_result.model,
         execution_target={
             "adapter": "github",
             "base_branch": base_branch,

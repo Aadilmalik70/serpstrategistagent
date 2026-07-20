@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     # when this explicit planning gate is enabled. Generated full-file patches
     # still require operator approval before the GitHub adapter may execute.
     github_patch_planning_enabled: bool = False
+    github_patch_planning_model: str = "posiden/deepseek-v4-flash"
     github_patch_planning_max_actions_per_refresh: int = 3
     github_patch_planning_max_tree_entries: int = 5_000
     github_patch_planning_max_source_files: int = 25
@@ -193,6 +194,14 @@ class Settings(BaseSettings):
             raise ValueError(
                 "GITHUB_EXECUTION_BRANCH_PREFIX may contain only letters, numbers, dots, underscores, and hyphens"
             )
+        return normalized
+
+    @field_validator("github_patch_planning_model")
+    @classmethod
+    def normalize_github_patch_planning_model(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("GITHUB_PATCH_PLANNING_MODEL cannot be empty")
         return normalized
 
     @model_validator(mode="after")
