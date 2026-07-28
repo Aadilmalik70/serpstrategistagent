@@ -99,8 +99,39 @@ async def test_ai_gateway_falls_back_after_rate_limit(monkeypatch):
             client=client,
         )
 
-    assert attempted_models == ["posiden/deepseek-v4-flash", "latina/gpt-5.6-terra"]
-    assert result.model == "latina/gpt-5.6-terra"
+    assert attempted_models == ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+    assert result.model == "llama-3.1-8b-instant"
+
+
+@pytest.mark.asyncio
+async def test_ai_gateway_falls_back_after_payment_required(monkeypatch):
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "server-only-ai-key")
+    monkeypatch.setenv("AI_PRIMARY_MODEL", "expired-model")
+    monkeypatch.setenv("AI_FALLBACK_MODEL", "llama-3.1-8b-instant")
+    monkeypatch.setenv("AI_SECONDARY_FALLBACK_MODEL", "")
+    get_settings.cache_clear()
+    attempted_models: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        attempted_models.append(payload["model"])
+        if len(attempted_models) == 1:
+            return httpx.Response(402, json={"error": {"message": "payment required"}})
+        return httpx.Response(200, json={"id": "fallback-result"})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="https://api.groq.com/openai/v1",
+    ) as client:
+        result = await request_ai(
+            workspace_id=uuid.uuid4(),
+            purpose="analysis",
+            messages=[{"role": "user", "content": "Hello"}],
+            client=client,
+        )
+
+    assert attempted_models == ["expired-model", "llama-3.1-8b-instant"]
+    assert result.model == "llama-3.1-8b-instant"
 
 
 @pytest.mark.asyncio
