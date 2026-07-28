@@ -15,12 +15,12 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
 
-    ai_gateway_base_url: str = "https://api.17.wtf/v1"
+    ai_gateway_base_url: str = "https://api.groq.com/openai/v1"
     ai_gateway_api_key: str = ""
-    ai_primary_model: str = "posiden/deepseek-v4-flash"
-    ai_reasoning_model: str = "zeus/claude-sonnet-4-6"
-    ai_fallback_model: str = "latina/gpt-5.6-terra"
-    ai_secondary_fallback_model: str = "latina/gpt-5.6-luna"
+    ai_primary_model: str = "llama-3.3-70b-versatile"
+    ai_reasoning_model: str = "llama-3.3-70b-versatile"
+    ai_fallback_model: str = "llama-3.1-8b-instant"
+    ai_secondary_fallback_model: str = "openai/gpt-oss-20b"
     ai_gateway_timeout_seconds: float = 30.0
 
     serpapi_api_key: str = ""
@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     # when this explicit planning gate is enabled. Generated full-file patches
     # still require operator approval before the GitHub adapter may execute.
     github_patch_planning_enabled: bool = False
-    github_patch_planning_model: str = "posiden/deepseek-v4-flash"
+    github_patch_planning_model: str = "llama-3.3-70b-versatile"
     github_patch_planning_max_actions_per_refresh: int = 3
     github_patch_planning_max_tree_entries: int = 5_000
     github_patch_planning_max_source_files: int = 25
