@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 import uuid
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ContentInsightResponse(BaseModel):
@@ -53,4 +53,4 @@ class ContentIntelligenceResponse(BaseModel):
     insights: list[ContentInsightResponse]
     recommendations: list[InternalLinkRecommendationResponse]
     semantic_graph: SemanticGraphResponse
-    action_ids: list[uuid.UUID] = []
+    action_ids: list[uuid.UUID] = Field(default_factory=list)
