@@ -48,7 +48,7 @@ async def test_ai_gateway_contracts_use_only_server_secret(
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == expected_path
         payload = json.loads(request.content)
-        assert payload["model"] == "posiden/deepseek-v4-flash"
+        assert payload["model"] == "llama-3.3-70b-versatile"
         if endpoint != "responses":
             assert payload["max_tokens"] == 1024
         if endpoint == "messages":
