@@ -18,7 +18,7 @@ GITHUB_APP_ID=<app-id>
 GITHUB_APP_SLUG=<app-slug>
 GITHUB_APP_PRIVATE_KEY_BASE64=<complete-private-key-pem-as-base64>
 GITHUB_PATCH_PLANNING_ENABLED=true
-GITHUB_PATCH_PLANNING_MODEL=posiden/deepseek-v4-flash
+GITHUB_PATCH_PLANNING_MODEL=llama-3.3-70b-versatile
 ```
 
 Draft-PR execution remains a separate rollout:
@@ -92,7 +92,7 @@ context, the planner must decline instead of inventing it.
 5. Set `GITHUB_PATCH_PLANNING_ENABLED=true` on every service that can run the
    Technical Finding pipeline, then redeploy together.
 6. Confirm `/health` reports `github_patch_planning=enabled`,
-   `github_patch_model=posiden/deepseek-v4-flash`, and Settings shows **Exact
+   `github_patch_model=llama-3.3-70b-versatile`, and Settings shows **Exact
    patch planning ready**.
 
 ## Manual UI test — upgrade the existing simulation action
@@ -178,7 +178,7 @@ same 20–60 character detector boundary.
 ### Dedicated patch-planning model (`0.18.3`)
 
 Repository patch planning explicitly requests `GITHUB_PATCH_PLANNING_MODEL`,
-which defaults to `posiden/deepseek-v4-flash`, instead of inheriting a possibly
+which defaults to `llama-3.3-70b-versatile`, instead of inheriting a possibly
 overridden general-purpose primary model. `/health` exposes the configured
 planner model. Ready and postcondition-fallback actions record the model that
 actually returned the AI response, and the Technical Findings UI displays it.

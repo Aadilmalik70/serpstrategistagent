@@ -15,11 +15,11 @@ Configure these secrets on the backend service:
 
 The following non-secret defaults are included in application configuration and may be overridden in Railway:
 
-- `AI_GATEWAY_BASE_URL=https://api.17.wtf/v1`
-- `AI_PRIMARY_MODEL=posiden/deepseek-v4-flash`
-- `AI_REASONING_MODEL=zeus/claude-sonnet-4-6`
-- `AI_FALLBACK_MODEL=latina/gpt-5.6-terra`
-- `AI_SECONDARY_FALLBACK_MODEL=latina/gpt-5.6-luna`
+- `AI_GATEWAY_BASE_URL=https://api.groq.com/openai/v1`
+- `AI_PRIMARY_MODEL=llama-3.3-70b-versatile`
+- `AI_REASONING_MODEL=llama-3.3-70b-versatile`
+- `AI_FALLBACK_MODEL=llama-3.1-8b-instant`
+- `AI_SECONDARY_FALLBACK_MODEL=openai/gpt-oss-20b`
 - `SERPAPI_BASE_URL=https://serpapi.com/search.json`
 
 ## Implemented controls
@@ -40,7 +40,7 @@ CI verifies:
 - integration lifecycle and tenant isolation
 - rejection of customer BYOK for platform-managed providers
 - all three AI-gateway request contracts
-- model fallback after rate limiting
+- model fallback after rate limiting or payment/quota responses
 - server-managed SerpAPI authentication and attribution
 - frontend lint, typecheck, and production build
 
