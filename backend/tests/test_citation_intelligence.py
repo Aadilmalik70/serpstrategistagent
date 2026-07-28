@@ -33,9 +33,16 @@ def test_missing_brand_and_missing_citation_are_distinct_gaps():
         competitor_terms=[],
         cited_urls=[],
     )
+    brand_gap = analyze_answer(
+        answer="Use this workflow for technical SEO.",
+        brand_terms=["SERP Strategists"],
+        competitor_terms=[],
+        cited_urls=[],
+    )
 
-    assert no_brand["gap_type"] == "brand_mention_gap"
+    assert no_brand["gap_type"] == "competitor_gap"
     assert no_citation["gap_type"] == "citation_gap"
+    assert brand_gap["gap_type"] == "brand_mention_gap"
     assert gap_priority("brand_mention_gap")[0] > gap_priority("citation_gap")[0]
 
 
