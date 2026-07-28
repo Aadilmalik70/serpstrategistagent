@@ -258,7 +258,7 @@ async def test_planner_builds_exact_reviewable_patch_without_persisting_token(mo
         assert kwargs["model"] == "posiden/deepseek-v4-flash"
         assert kwargs["max_tokens"] == 8_192
         assert kwargs["response_format"] == {"type": "json_object"}
-        prompt = kwargs["messages"][1]["content"
+        prompt = kwargs["messages"][1]["content"]
         assert "BEGIN UNTRUSTED SOURCE" in prompt
         assert source.strip() in prompt
         assert route_source.strip() not in prompt
