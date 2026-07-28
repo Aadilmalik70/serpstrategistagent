@@ -28,6 +28,7 @@ from app.models.search_performance import (
     UrlInspectionResult,
 )
 from app.models.content_intelligence import ContentInsight, InternalLinkRecommendation
+from app.models.citation_intelligence import CitationGap, CitationPromptSet, CitationResult, CitationScan
 from app.models.free_audit import FreeAuditRequest
 from app.models.github_app import (
     GitHubAppInstallation,
@@ -73,6 +74,10 @@ __all__ = [
     "UrlInspectionResult",
     "ContentInsight",
     "InternalLinkRecommendation",
+    "CitationPromptSet",
+    "CitationScan",
+    "CitationResult",
+    "CitationGap",
     "FreeAuditRequest",
     "GitHubAppInstallation",
     "GitHubAppInstallIntent",
