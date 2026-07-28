@@ -27,6 +27,7 @@ from app.models.search_performance import (
     UrlInspectionAttempt,
     UrlInspectionResult,
 )
+from app.models.content_intelligence import ContentInsight, InternalLinkRecommendation
 from app.models.free_audit import FreeAuditRequest
 from app.models.github_app import (
     GitHubAppInstallation,
@@ -70,6 +71,8 @@ __all__ = [
     "SearchSyncAttempt",
     "UrlInspectionAttempt",
     "UrlInspectionResult",
+    "ContentInsight",
+    "InternalLinkRecommendation",
     "FreeAuditRequest",
     "GitHubAppInstallation",
     "GitHubAppInstallIntent",

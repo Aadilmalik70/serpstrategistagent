@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import useSWR from "swr";
 
 import AgentChatPanel from "@/components/sites/agent-chat-panel";
+import ContentIntelligencePanel from "@/components/sites/content-intelligence-panel";
 import EEATPanel from "@/components/sites/eeat-panel";
 import IntegrationsPanel from "@/components/sites/integrations-panel";
 import IssuesPanel from "@/components/sites/issues-panel";
@@ -60,6 +61,7 @@ export default function SiteDetailPage({
     | "visualization"
     | "integrations"
     | "search"
+    | "content"
   >("agent");
   const [issueKey, setIssueKey] = useState(0);
   const [pageKey, setPageKey] = useState(0);
@@ -105,6 +107,7 @@ export default function SiteDetailPage({
     { key: "pages", label: "Pages" },
     { key: "issues", label: "Technical Findings" },
     { key: "search", label: "Search Opportunities" },
+    { key: "content", label: "Content Intelligence" },
     { key: "eeat", label: "🎓 E-E-A-T" },
     { key: "links", label: "🔗 Links" },
     { key: "status", label: "Status Codes" },
@@ -143,6 +146,7 @@ export default function SiteDetailPage({
           {activeTab === "pages" && <PagesTable key={pageKey} siteId={id} />}
           {activeTab === "issues" && <IssuesPanel key={issueKey} siteId={id} site={site} />}
           {activeTab === "search" && <SearchPerformancePanel siteId={id} />}
+          {activeTab === "content" && <ContentIntelligencePanel siteId={id} />}
           {activeTab === "eeat" && <EEATPanel siteId={id} />}
           {activeTab === "links" && <LinksPanel siteId={id} />}
           {activeTab === "status" && <StatusCodesPanel siteId={id} />}
