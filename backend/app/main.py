@@ -14,6 +14,7 @@ from app.routers import (
     auth,
     billing,
     chat,
+    citation_intelligence,
     content_intelligence,
     crawl,
     execution_jobs,
@@ -73,7 +74,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SERP Strategists Operator API",
-    version="0.19.0",
+    version="0.20.0",
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     lifespan=lifespan,
@@ -142,6 +143,7 @@ app.include_router(integrations.router)
 app.include_router(site_claims.router)
 app.include_router(sites.router)
 app.include_router(content_intelligence.router)
+app.include_router(citation_intelligence.router)
 app.include_router(crawl.router)
 app.include_router(agent.router)
 app.include_router(operator_actions.router)
@@ -174,6 +176,7 @@ async def health():
         "url_inspection_worker": "enabled" if settings.url_inspection_worker_enabled else "disabled",
         "javascript_rendering": "enabled" if settings.crawler_render_enabled else "disabled",
         "content_intelligence": "enabled",
+        "citation_intelligence": "enabled",
     }
 
 
