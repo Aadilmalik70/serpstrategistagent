@@ -351,28 +351,46 @@ def _response_text(result: AIGatewayResult) -> str:
     )
 
 
+def _response_finish_reason(result: AIGatewayResult) -> str | None:
+    choices = result.data.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return None
+    finish_reason = choices[0].get("finish_reason")
+    return finish_reason if isinstance(finish_reason, str) else None
+
+
 def _json_payload(raw: str) -> dict[str, Any]:
+    """Extract the first complete JSON object from a model response.
+
+    JSON mode should produce a bare object, but some OpenAI-compatible gateways
+    still add markdown fences or a short preamble. The JSON decoder lets us
+    accept those wrappers without using fragile regular expressions that could
+    corrupt braces inside the replacement source file.
+    """
     value = raw.strip()
     if value.startswith("```"):
         first_newline = value.find("\n")
         value = value[first_newline + 1 :] if first_newline >= 0 else value[3:]
-        if value.rstrip().endswith("```"):
-            value = value.rstrip()[:-3]
-    try:
-        payload = json.loads(value.strip())
-    except json.JSONDecodeError as exc:
-        raise GitHubPatchPlanningError(
-            "The AI gateway did not return the required JSON patch contract",
-            code="github_planner_ai_invalid_response",
-            retryable=True,
-        ) from exc
-    if not isinstance(payload, dict):
-        raise GitHubPatchPlanningError(
-            "The AI gateway returned an invalid patch contract",
-            code="github_planner_ai_invalid_response",
-            retryable=True,
-        )
-    return payload
+        closing_fence = value.rfind("```")
+        if closing_fence >= 0:
+            value = value[:closing_fence]
+
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(value):
+        if character != "{":
+            continue
+        try:
+            payload, _end = decoder.raw_decode(value[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+
+    raise GitHubPatchPlanningError(
+        "The AI gateway did not return the required JSON patch contract",
+        code="github_planner_ai_invalid_response",
+        retryable=True,
+    )
 
 
 def _image_tag_alt_value(tag: str) -> tuple[bool, str | None]:
@@ -864,12 +882,20 @@ async def plan_patch_for_finding(
                 source=source,
             ),
             model=settings.github_patch_planning_model,
-            # A complete replacement file is returned, so a smaller completion
-            # budget keeps the request within Groq's body/token limits.
-            max_tokens=4_096,
+            # A complete replacement file is returned. Keep enough room for
+            # the source content while staying below the prior 413-triggering
+            # budget.
+            max_tokens=8_192,
+            response_format={"type": "json_object"},
             client=ai_client,
             db=db,
         )
+        if _response_finish_reason(ai_result) in {"length", "max_tokens"}:
+            raise GitHubPatchPlanningError(
+                "The AI gateway truncated the JSON patch response before completion",
+                code="github_planner_ai_response_truncated",
+                retryable=True,
+            )
         payload = _json_payload(_response_text(ai_result))
         if payload.get("can_patch") is not True:
             reason = str(payload.get("summary") or "The source change was ambiguous.")[:500]

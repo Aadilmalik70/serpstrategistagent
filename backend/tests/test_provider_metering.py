@@ -135,3 +135,26 @@ async def test_serpapi_checks_and_records_workspace_usage(monkeypatch) -> None:
     assert usage_calls[0]["details"]["result_count"] == 2
     assert db.commits == 0
     assert db.rollbacks == 0
+
+
+
+@pytest.mark.asyncio
+async def test_ai_gateway_forwards_json_response_format(monkeypatch) -> None:
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "server-only-ai-key")
+    get_settings.cache_clear()
+    seen_payload: dict = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_payload.update(json.loads(request.content))
+        return httpx.Response(200, json={"model": seen_payload["model"], "usage": {}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await ai_gateway.request_ai(
+            workspace_id=uuid.uuid4(),
+            purpose="github_patch_planning",
+            messages=[{"role": "user", "content": "Return JSON"}],
+            response_format={"type": "json_object"},
+            client=client,
+        )
+
+    assert seen_payload["response_format"] == {"type": "json_object"}

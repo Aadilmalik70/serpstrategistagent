@@ -62,14 +62,22 @@ def _request_parts(
     messages: list[dict[str, Any]] | None,
     input_text: str | None,
     max_tokens: int,
+    response_format: dict[str, Any] | None,
 ) -> tuple[str, dict[str, str], dict[str, Any]]:
     if endpoint == "chat_completions":
         if not messages:
             raise AIGatewayError("messages are required for chat completions", status_code=400)
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+        }
+        if response_format is not None:
+            payload["response_format"] = response_format
         return (
             "chat/completions",
             {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            {"model": model, "messages": messages, "max_tokens": max_tokens},
+            payload,
         )
     if endpoint == "messages":
         if not messages:
@@ -120,6 +128,7 @@ async def request_ai(
     input_text: str | None = None,
     model: str | None = None,
     max_tokens: int = 1024,
+    response_format: dict[str, Any] | None = None,
     client: httpx.AsyncClient | None = None,
     db: AsyncSession | None = None,
 ) -> AIGatewayResult:
@@ -151,6 +160,7 @@ async def request_ai(
                 messages=messages,
                 input_text=input_text,
                 max_tokens=max_tokens,
+                response_format=response_format,
             )
             url = f"{settings.ai_gateway_base_url}/{path}"
             try:

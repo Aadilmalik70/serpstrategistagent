@@ -256,6 +256,8 @@ async def test_planner_builds_exact_reviewable_patch_without_persisting_token(mo
 
     async def fake_ai(**kwargs) -> AIGatewayResult:
         assert kwargs["model"] == "posiden/deepseek-v4-flash"
+        assert kwargs["max_tokens"] == 8_192
+        assert kwargs["response_format"] == {"type": "json_object"}
         prompt = kwargs["messages"][1]["content"]
         assert "BEGIN UNTRUSTED SOURCE" in prompt
         assert source.strip() in prompt
@@ -396,3 +398,31 @@ def test_fallback_action_records_the_model_that_returned_the_rejected_patch() ->
 
     assert action is not None
     assert action.proposed_diff["planner"]["model"] == "posiden/deepseek-v4-flash"
+
+
+
+def test_patch_contract_parser_accepts_wrapped_json_and_rejects_truncation() -> None:
+    payload = {
+        "can_patch": True,
+        "content": "export default () => <h1>Home</h1>;\\n",
+        "summary": "Add a heading",
+        "validation_notes": [],
+    }
+    wrapped = "The model prepared this patch:\\n```JSON\\n" + json.dumps(payload) + "\\n```"
+    assert planner._json_payload(wrapped) == payload
+
+    with pytest.raises(planner.GitHubPatchPlanningError) as invalid:
+        planner._json_payload('{"can_patch":true,"content":"incomplete')
+    assert invalid.value.code == "github_planner_ai_invalid_response"
+
+def test_response_finish_reason_is_exposed_for_truncation_detection() -> None:
+    result = AIGatewayResult(
+        data={"choices": [{"finish_reason": "length"}]},
+        model="test-model",
+        endpoint="chat_completions",
+        workspace_id=uuid.uuid4(),
+        site_id=None,
+        purpose="github_patch_planning",
+        usage={},
+    )
+    assert planner._response_finish_reason(result) == "length"
