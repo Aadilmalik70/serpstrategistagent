@@ -168,12 +168,26 @@ async def request_ai(
                 last_error = AIGatewayError("AI gateway rate limit reached", status_code=429, retryable=True)
                 continue
             if response.status_code >= 500:
-                last_error = AIGatewayError("AI gateway is temporarily unavailable", retryable=True)
+                last_error = AIGatewayError(
+                    "AI gateway is temporarily unavailable",
+                    status_code=response.status_code,
+                    retryable=True,
+                )
+                continue
+            # A 402 can mean that the requested model is not enabled or that the
+            # provider account has exhausted its allowance. Try the configured
+            # model candidates before surfacing the provider error.
+            if response.status_code == 402:
+                last_error = AIGatewayError(
+                    "AI gateway returned HTTP 402 (payment or provider quota required)",
+                    status_code=402,
+                    retryable=True,
+                )
                 continue
             if response.status_code < 200 or response.status_code >= 300:
                 raise AIGatewayError(
                     f"AI gateway returned HTTP {response.status_code}",
-                    status_code=502,
+                    status_code=response.status_code,
                 )
 
             try:
