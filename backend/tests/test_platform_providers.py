@@ -70,7 +70,7 @@ async def test_ai_gateway_contracts_use_only_server_secret(
             **input_kwargs,
         )
 
-    assert result.model == "posiden/deepseek-v4-flash"
+    assert result.model == "llama-3.3-70b-versatile"
     assert result.usage == {"total_tokens": 3}
     assert secret not in repr(result)
 
