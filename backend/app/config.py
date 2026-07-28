@@ -68,7 +68,9 @@ class Settings(BaseSettings):
     github_patch_planning_max_actions_per_refresh: int = 3
     github_patch_planning_max_tree_entries: int = 5_000
     github_patch_planning_max_source_files: int = 25
-    github_patch_planning_max_candidate_bytes: int = 65_536
+    # Keep repository source sent to the AI planner small enough for provider
+    # request-body and free-tier token limits. This does not change execution limits.
+    github_patch_planning_max_candidate_bytes: int = 24_000
     github_patch_planning_max_changed_lines: int = 200
 
     wordpress_url: str = ""
