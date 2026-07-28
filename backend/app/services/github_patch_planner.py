@@ -835,10 +835,17 @@ async def plan_patch_for_finding(
     except GitHubPatchPlanningError as exc:
         return RepositoryPatchPlan.fallback(exc.code, str(exc))
 
-    if len(source.encode("utf-8")) > settings.github_patch_planning_max_candidate_bytes:
+    # Keep the full-file patch request comfortably below provider body and free-tier
+    # token limits. The configured candidate limit remains an execution guard, but
+    # patch planning uses a stricter prompt budget.
+    planning_source_limit = min(
+        settings.github_patch_planning_max_candidate_bytes,
+        24_000,
+    )
+    if len(source.encode("utf-8")) > planning_source_limit:
         return RepositoryPatchPlan.fallback(
             "source_file_too_large",
-            "The resolved source file exceeds the configured AI planning limit.",
+            "The resolved source file exceeds the bounded AI patch-planning request limit.",
         )
 
     ai_result: AIGatewayResult | None = None
@@ -857,7 +864,9 @@ async def plan_patch_for_finding(
                 source=source,
             ),
             model=settings.github_patch_planning_model,
-            max_tokens=16_384,
+            # A complete replacement file is returned, so a smaller completion
+            # budget keeps the request within Groq's body/token limits.
+            max_tokens=4_096,
             client=ai_client,
             db=db,
         )

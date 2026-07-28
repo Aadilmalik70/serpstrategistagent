@@ -184,6 +184,14 @@ async def request_ai(
                     retryable=True,
                 )
                 continue
+            if response.status_code == 413:
+                provider_detail = response.text.strip().replace("\\n", " ")[:300]
+                detail_suffix = f": {provider_detail}" if provider_detail else ""
+                raise AIGatewayError(
+                    "AI gateway rejected the request as too large (HTTP 413)"
+                    f"{detail_suffix}. Reduce the prompt or source-file size.",
+                    status_code=413,
+                )
             if response.status_code < 200 or response.status_code >= 300:
                 raise AIGatewayError(
                     f"AI gateway returned HTTP {response.status_code}",
