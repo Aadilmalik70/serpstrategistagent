@@ -132,6 +132,19 @@ def _terms(values: list[Any]) -> list[str]:
     return result[:20]
 
 
+def _serialize_internal_link_targets(
+    rows: list[tuple[InternalLinkRecommendation, Page]],
+) -> list[dict[str, str]]:
+    return [
+        {
+            "path": page.path,
+            "anchor_text": recommendation.anchor_text,
+            "reason": recommendation.reason,
+        }
+        for recommendation, page in rows
+    ]
+
+
 async def create_brief(db: AsyncSession, *, workspace_id: uuid.UUID, site_id: uuid.UUID, data: ContentBriefCreate) -> ContentBrief:
     await _site(db, workspace_id, site_id)
     opportunity = None
@@ -151,8 +164,17 @@ async def create_brief(db: AsyncSession, *, workspace_id: uuid.UUID, site_id: uu
     title = (data.topic or (opportunity.title if opportunity else None) or (page.title if page else None) or target_query or "Untitled content brief").strip()
     topics = _terms((insight.topics if insight else []) + ([target_query] if target_query else []))
     entities = _terms(insight.entities if insight else [])
-    links = list((await db.execute(select(InternalLinkRecommendation).where(InternalLinkRecommendation.site_id == site_id, InternalLinkRecommendation.status == "active").order_by(desc(InternalLinkRecommendation.priority_score)).limit(8))).scalars().all())
-    link_targets = [{"path": item.target_path, "anchor_text": item.anchor_text, "reason": item.reason} for item in links]
+    link_rows = list((await db.execute(
+        select(InternalLinkRecommendation, Page)
+        .join(Page, Page.id == InternalLinkRecommendation.target_page_id)
+        .where(
+            InternalLinkRecommendation.site_id == site_id,
+            InternalLinkRecommendation.status == "active",
+        )
+        .order_by(desc(InternalLinkRecommendation.priority_score))
+        .limit(8)
+    )).all())
+    link_targets = _serialize_internal_link_targets(link_rows)
     evidence = list((opportunity.evidence if opportunity else []) or [])
     if insight:
         evidence.append({"signal": "content_insight", "page_path": page.path, "decay_score": insight.decay_score, "information_gain_score": insight.information_gain_score, "metrics": insight.metrics or {}})
