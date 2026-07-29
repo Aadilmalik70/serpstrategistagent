@@ -187,3 +187,77 @@ def test_expired_lease_requeues_fetching_frontier_and_closes_attempt() -> None:
         assert frontier_status == "queued"
         assert attempt_error == "lease_expired"
         assert site_status == "crawl_queued"
+
+
+
+def test_retry_failed_pages_preserves_completed_frontier_rows() -> None:
+    suffix = uuid.uuid4().hex
+    domain = f"retry-frontier-{suffix}.example.com"
+
+    with TestClient(app) as client:
+        auth = _register(client, suffix)
+        headers = _headers(auth)
+        site_id = _create_site(client, auth, domain)
+        started = client.post(
+            "/crawl/site",
+            headers=headers,
+            json={"site_id": site_id, "max_pages": 10},
+        )
+        assert started.status_code == 202, started.text
+        job_id = uuid.UUID(started.json()["job_id"])
+
+        async def seed_frontier() -> None:
+            async with async_session_factory() as db:
+                job = await db.get(JobQueue, job_id)
+                assert job is not None
+                job.status = "completed"
+                job.attempt_count = 1
+                job.result = {"pages_crawled": 1}
+                site = await db.get(Site, job.site_id)
+                assert site is not None
+                site.status = "ready"
+                rows = [
+                    ("/home", "completed"),
+                    ("/temporary-error", "failed"),
+                    ("/challenge", "blocked"),
+                ]
+                for path, status in rows:
+                    url = f"https://{domain}{path}"
+                    db.add(
+                        CrawlFrontier(
+                            job_id=job_id,
+                            url=url,
+                            url_hash=hashlib.sha256(url.encode()).hexdigest(),
+                            status=status,
+                            attempt_count=2,
+                            last_error="previous failure" if status != "completed" else None,
+                        )
+                    )
+                await db.commit()
+
+        assert client.portal is not None
+        client.portal.call(seed_frontier)
+
+        retried = client.post(f"/crawl/{job_id}/retry-failed", headers=headers)
+        assert retried.status_code == 202, retried.text
+        assert retried.json()["status"] == "queued"
+
+        async def read_frontier() -> list[tuple[str, str, int, str | None]]:
+            async with async_session_factory() as db:
+                rows = list(
+                    (
+                        await db.execute(
+                            select(CrawlFrontier)
+                            .where(CrawlFrontier.job_id == job_id)
+                            .order_by(CrawlFrontier.url.asc())
+                        )
+                    ).scalars().all()
+                )
+                return [(row.url, row.status, row.attempt_count, row.last_error) for row in rows]
+
+        frontier = client.portal.call(read_frontier)
+        assert [(url.rsplit("/", 1)[-1], status, attempts, error) for url, status, attempts, error in frontier] == [
+            ("challenge", "queued", 0, None),
+            ("home", "completed", 2, None),
+            ("temporary-error", "queued", 0, None),
+        ]
