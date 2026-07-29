@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import re
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import quote
 import uuid
 
@@ -67,15 +67,56 @@ def _opportunity_dict(item: ContentOpportunity) -> dict[str, Any]:
     }
 
 
-def _opportunity_dicts(items: list[ContentOpportunity]) -> list[dict[str, Any]]:
-    """Materialize ORM values before get_workspace commits its sync transaction.
+def _opportunity_payload_from_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Build an API payload from explicitly selected scalar columns."""
+    return {
+        "id": row["id"], "site_id": row["site_id"], "page_id": row["page_id"], "opportunity_type": row["opportunity_type"],
+        "status": row["status"], "title": row["title"], "summary": row["summary"], "target_query": row["target_query"],
+        "target_path": row["target_path"], "priority_score": row["priority_score"], "confidence_score": row["confidence_score"],
+        "effort_score": row["effort_score"], "evidence": row["evidence"] or [], "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
 
-    This keeps response serialization independent of SQLAlchemy's
-    ``expire_on_commit`` setting.  Accessing an expired attribute from an
-    async endpoint would otherwise trigger an implicit lazy load and raise
-    outside the async greenlet.
+
+async def _opportunity_payload(
+    db: AsyncSession,
+    rows: list[ContentOpportunity],
+) -> list[dict[str, Any]]:
+    """Reload response columns explicitly after sync_opportunities flushes.
+
+    SQLAlchemy may expire server-managed columns such as ``updated_at`` during
+    flush. Reading those attributes from async ORM instances can trigger an
+    implicit IO operation and raise MissingGreenlet. A scalar-column query
+    keeps response serialization fully loaded and IO-explicit.
     """
-    return [_opportunity_dict(item) for item in items]
+    opportunity_ids = [row.id for row in rows]
+    if not opportunity_ids:
+        return []
+
+    result = await db.execute(
+        select(
+            ContentOpportunity.id,
+            ContentOpportunity.site_id,
+            ContentOpportunity.page_id,
+            ContentOpportunity.opportunity_type,
+            ContentOpportunity.status,
+            ContentOpportunity.title,
+            ContentOpportunity.summary,
+            ContentOpportunity.target_query,
+            ContentOpportunity.target_path,
+            ContentOpportunity.priority_score,
+            ContentOpportunity.confidence_score,
+            ContentOpportunity.effort_score,
+            ContentOpportunity.evidence,
+            ContentOpportunity.created_at,
+            ContentOpportunity.updated_at,
+        ).where(ContentOpportunity.id.in_(opportunity_ids))
+    )
+    payload_by_id = {
+        item["id"]: _opportunity_payload_from_row(item)
+        for item in result.mappings().all()
+    }
+    return [payload_by_id[item_id] for item_id in opportunity_ids if item_id in payload_by_id]
 
 
 async def sync_opportunities(db: AsyncSession, *, workspace_id: uuid.UUID, site_id: uuid.UUID) -> list[ContentOpportunity]:
@@ -358,7 +399,7 @@ async def submit_for_approval(db: AsyncSession, *, workspace_id: uuid.UUID, user
 
 async def get_workspace(db: AsyncSession, *, workspace_id: uuid.UUID, site_id: uuid.UUID) -> dict[str, Any]:
     rows = await sync_opportunities(db, workspace_id=workspace_id, site_id=site_id)
-    opportunity_payload = _opportunity_dicts(rows)
+    opportunity_payload = await _opportunity_payload(db, rows)
     await db.commit()
     briefs = list((await db.execute(select(ContentBrief).where(ContentBrief.site_id == site_id, ContentBrief.workspace_id == workspace_id).order_by(desc(ContentBrief.updated_at)).limit(50))).scalars().all())
     drafts = list((await db.execute(select(ContentDraft).where(ContentDraft.site_id == site_id, ContentDraft.workspace_id == workspace_id).order_by(desc(ContentDraft.updated_at)).limit(50))).scalars().all())
