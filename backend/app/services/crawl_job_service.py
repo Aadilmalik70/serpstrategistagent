@@ -437,6 +437,7 @@ async def retry_failed_crawl_pages(
             completed_at=None,
         )
     )
+    baseline_pages_crawled = int((job.result or {}).get("pages_crawled") or 0)
     raw_snapshot_id = (job.payload or {}).get("snapshot_id")
     if raw_snapshot_id:
         try:
@@ -444,6 +445,7 @@ async def retry_failed_crawl_pages(
         except (TypeError, ValueError):
             snapshot = None
         if snapshot:
+            baseline_pages_crawled = max(baseline_pages_crawled, int(snapshot.pages_crawled or 0))
             snapshot.status = "running"
             snapshot.completed_at = None
             snapshot.extracted_data = {
@@ -465,6 +467,9 @@ async def retry_failed_crawl_pages(
     job.max_attempts = max(job.max_attempts, job.attempt_count + settings.crawl_job_max_attempts)
     job.payload = {
         **(job.payload or {}),
+        # Keep the previously completed-page baseline in the cap so a crawl
+        # that already reached max_pages can still consume the retry queue.
+        "max_pages": min(100_000, max(1, baseline_pages_crawled + retryable)),
         "retry_cycle_started_at_attempt": job.attempt_count,
         "retry_failed_pages": retryable,
     }
