@@ -1,5 +1,9 @@
+import asyncio
+import socket
 import uuid
 from urllib.parse import urlsplit
+
+import httpx
 
 from fastapi.testclient import TestClient
 
@@ -22,6 +26,78 @@ def test_validated_destination_is_pinned_without_changing_host_identity() -> Non
     assert pinned == "https://203.0.113.10/path?q=1"
     assert sni_hostname == "example.com"
     assert host_header == "example.com"
+
+
+def test_public_host_resolution_prefers_ipv4(monkeypatch) -> None:
+    def fake_getaddrinfo(hostname, port, family, socktype):
+        assert hostname == "telcoedge.com"
+        assert port == 443
+        assert family == 0
+        assert socktype == socket.SOCK_STREAM
+        return [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:2800:220:1:248:1893:25c8:1946", 443, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+        ]
+
+    monkeypatch.setattr(crawler.socket, "getaddrinfo", fake_getaddrinfo)
+
+    addresses = asyncio.run(crawler._resolve_public_host("telcoedge.com", 443))
+
+    assert addresses == ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"]
+
+
+def test_fetch_retries_next_resolved_address_after_transport_error(monkeypatch) -> None:
+    async def fake_resolver(hostname: str, port: int) -> list[str]:
+        assert hostname == "example.com"
+        assert port == 443
+        return ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"]
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "text/html"}
+
+        async def aiter_bytes(self):
+            yield b"<html><title>Recovered</title></html>"
+
+    class FakeStream:
+        def __init__(self, *, error: Exception | None = None):
+            self.error = error
+
+        async def __aenter__(self):
+            if self.error:
+                raise self.error
+            return FakeResponse()
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class FakeClient:
+        def __init__(self):
+            self.calls: list[tuple[str, dict]] = []
+
+        def stream(self, method: str, url: str, **kwargs):
+            self.calls.append((url, kwargs))
+            if len(self.calls) == 1:
+                return FakeStream(error=httpx.ConnectError("IPv4 route unavailable"))
+            return FakeStream()
+
+    monkeypatch.setattr(crawler, "_resolve_public_host", fake_resolver)
+    client = FakeClient()
+
+    result = asyncio.run(
+        crawler._fetch_url(
+            client,
+            "https://example.com/",
+            site_host="example.com",
+            max_bytes=10_000,
+            max_redirects=3,
+        )
+    )
+
+    assert result.status_code == 200
+    assert len(client.calls) == 2
+    assert client.calls[0][0] == "https://93.184.216.34/"
+    assert client.calls[1][0] == "https://[2606:2800:220:1:248:1893:25c8:1946]/"
 
 
 def _register(client: TestClient, email: str, workspace_name: str) -> dict:
