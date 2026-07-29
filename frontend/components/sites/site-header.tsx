@@ -105,6 +105,7 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
       await new Promise((resolve) => window.setTimeout(resolve, 1250));
       const crawl = await apiFetch<CrawlStatus>(`/crawl/${jobId}`);
       setLastCrawlStatus(crawl.status);
+      setRetryableFailedPages(crawl.retryable_failed_pages || 0);
       setStatusMessage(
         crawl.status === "completed"
           ? `Crawl completed: ${crawl.pages_crawled} pages.`
@@ -164,6 +165,7 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
     try {
       const crawl = await apiFetch<CrawlStatus>(`/crawl/${currentCrawlJobId}/cancel`, { method: "POST" });
       setLastCrawlStatus(crawl.status);
+      setRetryableFailedPages(crawl.retryable_failed_pages || 0);
       setStatusMessage(
         crawl.status === "cancelled"
           ? "Crawl cancelled. Its saved checkpoint can be resumed."
