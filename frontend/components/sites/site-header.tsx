@@ -25,7 +25,7 @@ type AgentStatus = {
   pages_analyzed?: number;
   meta?: { phase?: string; crawl_job_id?: string };
 };
-type CrawlStart = { job_id: string; status: string; reused?: boolean };
+type CrawlStart = { job_id: string; status: string; reused?: boolean; retryable_failed_pages?: number };
 type CrawlStatus = {
   job_id?: string;
   status: string;
@@ -33,6 +33,7 @@ type CrawlStatus = {
   pages_crawled: number;
   errors: number;
   error: string | null;
+  retryable_failed_pages?: number;
 };
 
 const TERMINAL_CRAWL_STATES = new Set(["completed", "failed", "cancelled"]);
@@ -42,6 +43,7 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
   const [runningCrawl, setRunningCrawl] = useState(false);
   const [currentCrawlJobId, setCurrentCrawlJobId] = useState<string | null>(null);
   const [lastCrawlStatus, setLastCrawlStatus] = useState<string | null>(null);
+  const [retryableFailedPages, setRetryableFailedPages] = useState(0);
   const [statusMessage, setStatusMessage] = useState("");
   const [statusError, setStatusError] = useState(false);
 
@@ -55,6 +57,7 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
         const jobId = crawl.job_id;
         setCurrentCrawlJobId(jobId);
         setLastCrawlStatus(crawl.status);
+        setRetryableFailedPages(crawl.retryable_failed_pages || 0);
         if (TERMINAL_CRAWL_STATES.has(crawl.status)) return;
 
         setRunningCrawl(true);
@@ -70,6 +73,7 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
           if (stopped) return;
           crawl = await apiFetch<CrawlStatus>(`/crawl/${jobId}`);
           setLastCrawlStatus(crawl.status);
+        setRetryableFailedPages(crawl.retryable_failed_pages || 0);
           if (!TERMINAL_CRAWL_STATES.has(crawl.status)) continue;
           setRunningCrawl(false);
           if (crawl.status === "completed" && crawl.pages_crawled > 0) {
@@ -101,6 +105,7 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
       await new Promise((resolve) => window.setTimeout(resolve, 1250));
       const crawl = await apiFetch<CrawlStatus>(`/crawl/${jobId}`);
       setLastCrawlStatus(crawl.status);
+      setRetryableFailedPages(crawl.retryable_failed_pages || 0);
       setStatusMessage(
         crawl.status === "completed"
           ? `Crawl completed: ${crawl.pages_crawled} pages.`
@@ -160,6 +165,7 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
     try {
       const crawl = await apiFetch<CrawlStatus>(`/crawl/${currentCrawlJobId}/cancel`, { method: "POST" });
       setLastCrawlStatus(crawl.status);
+      setRetryableFailedPages(crawl.retryable_failed_pages || 0);
       setStatusMessage(
         crawl.status === "cancelled"
           ? "Crawl cancelled. Its saved checkpoint can be resumed."
@@ -188,6 +194,29 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
       setStatusError(true);
       setStatusMessage(
         error instanceof OperatorApiError ? error.message : "The crawl could not be resumed.",
+      );
+    } finally {
+      setRunningCrawl(false);
+    }
+  }
+
+
+  async function retryFailedPages() {
+    if (!currentCrawlJobId || runningCrawl || runningAgent || retryableFailedPages < 1) return;
+    setRunningCrawl(true);
+    setStatusError(false);
+    setStatusMessage(`Retrying ${retryableFailedPages} failed page${retryableFailedPages === 1 ? "" : "s"} from the saved frontier…`);
+    try {
+      const crawl = await apiFetch<CrawlStart>(`/crawl/${currentCrawlJobId}/retry-failed`, {
+        method: "POST",
+      });
+      setLastCrawlStatus(crawl.status);
+      setRetryableFailedPages(0);
+      await waitForCrawl(crawl.job_id);
+    } catch (error) {
+      setStatusError(true);
+      setStatusMessage(
+        error instanceof OperatorApiError ? error.message : "Failed pages could not be retried.",
       );
     } finally {
       setRunningCrawl(false);
@@ -288,6 +317,16 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
                 className="rounded-md border border-blue-200 bg-white px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
               >
                 Resume Crawl
+              </button>
+            ) : null}
+            {!runningCrawl && currentCrawlJobId && retryableFailedPages > 0 ? (
+              <button
+                type="button"
+                onClick={() => void retryFailedPages()}
+                disabled={runningAgent}
+                className="rounded-md border border-amber-200 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+              >
+                Retry {retryableFailedPages} failed page{retryableFailedPages === 1 ? "" : "s"}
               </button>
             ) : null}
             <button

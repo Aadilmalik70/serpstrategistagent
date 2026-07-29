@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import async_session_factory
 from app.models.agent_run import AgentRun
+from app.models.crawl_snapshot import CrawlSnapshot
 from app.models.identity import Workspace
 from app.models.job_queue import CrawlAttempt, CrawlFrontier, JobQueue
 from app.models.page import Page
@@ -353,6 +354,133 @@ async def resume_crawl_job(
             run.summary = "Crawl resumed; analysis will continue after it succeeds."
             run.completed_at = None
             run.meta = {**(run.meta or {}), "phase": "crawl"}
+    await db.commit()
+    await db.refresh(job)
+    await _signal_job(job.id)
+    return job
+
+
+
+async def retry_failed_crawl_pages(
+    db: AsyncSession,
+    *,
+    workspace_id: uuid.UUID,
+    job_id: uuid.UUID,
+) -> JobQueue:
+    """Requeue only failed/blocked frontier rows for an explicit operator retry.
+
+    Successful pages remain completed in the durable frontier, so a transient
+    origin failure or bot challenge does not force a full recrawl.
+    """
+    initial_job = await get_crawl_job(
+        db,
+        workspace_id=workspace_id,
+        job_id=job_id,
+        for_update=False,
+    )
+    workspace = await db.scalar(
+        select(Workspace).where(Workspace.id == workspace_id).with_for_update()
+    )
+    if not workspace:
+        raise CrawlJobServiceError("Crawl workspace not found", 404)
+    job = await db.scalar(
+        select(JobQueue)
+        .where(JobQueue.id == initial_job.id, JobQueue.job_type == "crawl")
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if not job:
+        raise CrawlJobServiceError("Crawl job not found", 404)
+    if job.status not in TERMINAL_CRAWL_STATUSES:
+        raise CrawlJobServiceError(
+            "Only completed, failed, or cancelled crawls can retry failed pages",
+            409,
+        )
+
+    retryable = int(
+        await db.scalar(
+            select(func.count(CrawlFrontier.id)).where(
+                CrawlFrontier.job_id == job.id,
+                CrawlFrontier.status.in_(["failed", "blocked"]),
+            )
+        )
+        or 0
+    )
+    if retryable < 1:
+        raise CrawlJobServiceError("This crawl has no failed or blocked pages to retry", 409)
+
+    subscription, _, current = await assert_usage_quota(
+        db,
+        workspace_id=workspace_id,
+        metric="monthly_crawl_pages",
+        requested=retryable,
+    )
+    limit = int(effective_entitlements(subscription)["monthly_crawl_pages"])
+    if current + retryable > limit:
+        raise QuotaExceededError(
+            "monthly_crawl_pages",
+            limit,
+            current,
+            retryable,
+        )
+
+    await db.execute(
+        update(CrawlFrontier)
+        .where(
+            CrawlFrontier.job_id == job.id,
+            CrawlFrontier.status.in_(["failed", "blocked"]),
+        )
+        .values(
+            status="queued",
+            attempt_count=0,
+            last_error=None,
+            completed_at=None,
+        )
+    )
+    baseline_pages_crawled = int((job.result or {}).get("pages_crawled") or 0)
+    raw_snapshot_id = (job.payload or {}).get("snapshot_id")
+    if raw_snapshot_id:
+        try:
+            snapshot = await db.get(CrawlSnapshot, uuid.UUID(str(raw_snapshot_id)))
+        except (TypeError, ValueError):
+            snapshot = None
+        if snapshot:
+            baseline_pages_crawled = max(baseline_pages_crawled, int(snapshot.pages_crawled or 0))
+            snapshot.status = "running"
+            snapshot.completed_at = None
+            snapshot.extracted_data = {
+                **(snapshot.extracted_data or {}),
+                "phase": "retrying_failed_pages",
+                "retryable_pages": retryable,
+            }
+
+    now = _now()
+    job.status = "queued"
+    job.cancellation_requested = False
+    job.run_after = now
+    job.completed_at = None
+    job.error_code = None
+    job.error_message = None
+    job.lease_owner = None
+    job.lease_expires_at = None
+    job.heartbeat_at = None
+    job.max_attempts = max(job.max_attempts, job.attempt_count + settings.crawl_job_max_attempts)
+    job.payload = {
+        **(job.payload or {}),
+        # Keep the previously completed-page baseline in the cap so a crawl
+        # that already reached max_pages can still consume the retry queue.
+        "max_pages": min(100_000, max(1, baseline_pages_crawled + retryable)),
+        "retry_cycle_started_at_attempt": job.attempt_count,
+        "retry_failed_pages": retryable,
+    }
+    job.result = {
+        **(job.result or {}),
+        "retry_requested_pages": retryable,
+        "retry_requested_at": now.isoformat(),
+    }
+    site = await db.get(Site, job.site_id)
+    if site:
+        site.status = "crawl_queued"
     await db.commit()
     await db.refresh(job)
     await _signal_job(job.id)

@@ -15,6 +15,7 @@ from app.services.crawl_job_service import (
     CrawlJobServiceError,
     enqueue_crawl_job,
     request_crawl_cancellation,
+    retry_failed_crawl_pages,
     resume_crawl_job,
 )
 from app.services.site_service import get_site_by_id
@@ -70,6 +71,15 @@ async def _crawl_status_payload(db: AsyncSession, job: JobQueue) -> dict:
         ).scalar_one_or_none()
 
     result = job.result or {}
+    details = (snapshot.extracted_data or {}) if snapshot else result.get("details", {})
+    frontier = details.get("frontier") if isinstance(details, dict) else None
+    frontier = frontier if isinstance(frontier, dict) else {}
+    total_frontier = int(frontier.get("total") or 0)
+    completed_frontier = int(frontier.get("completed") or 0)
+    failed_frontier = int(frontier.get("failed") or 0)
+    blocked_frontier = int(frontier.get("blocked") or 0)
+    retryable_pages = failed_frontier + blocked_frontier
+    quality_denominator = max(total_frontier, 1)
     return {
         "job_id": str(job.id),
         "site_id": str(job.site_id),
@@ -86,7 +96,15 @@ async def _crawl_status_payload(db: AsyncSession, job: JobQueue) -> dict:
         "heartbeat_at": job.heartbeat_at,
         "started_at": job.started_at,
         "completed_at": job.completed_at,
-        "details": (snapshot.extracted_data or {}) if snapshot else result.get("details", {}),
+        "details": details,
+        "frontier": frontier,
+        "retryable_failed_pages": retryable_pages,
+        "quality": {
+            "success_rate": round(completed_frontier / quality_denominator, 4),
+            "failure_rate": round(failed_frontier / quality_denominator, 4),
+            "blocked_rate": round(blocked_frontier / quality_denominator, 4),
+            "deferred_pages": int(frontier.get("deferred") or 0),
+        },
     }
 
 
@@ -200,6 +218,26 @@ async def resume_crawl(
     require_workspace_role(context, "owner", "admin")
     try:
         job = await resume_crawl_job(
+            db,
+            workspace_id=context.workspace.id,
+            job_id=job_id,
+        )
+    except CrawlJobServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return await _crawl_status_payload(db, job)
+
+ 
+ 
+@router.post("/{job_id}/retry-failed", status_code=202)
+async def retry_failed_pages(
+    job_id: uuid.UUID,
+    context: WorkspaceContext = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retry failed/blocked URLs while preserving completed frontier rows."""
+    require_workspace_role(context, "owner", "admin")
+    try:
+        job = await retry_failed_crawl_pages(
             db,
             workspace_id=context.workspace.id,
             job_id=job_id,
