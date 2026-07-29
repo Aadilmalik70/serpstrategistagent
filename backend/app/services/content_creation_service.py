@@ -27,6 +27,17 @@ class ContentCreationError(ValueError):
         self.status_code = status_code
 
 
+def _next_draft_version(
+    current_version: int | None,
+    *,
+    is_new_version: bool,
+    has_persisted_id: bool,
+) -> int:
+    """Return a valid draft version even for legacy rows with a NULL version."""
+    current = current_version or 0
+    return max(1, current + 1 if is_new_version and has_persisted_id else current)
+
+
 async def _site(db: AsyncSession, workspace_id: uuid.UUID, site_id: uuid.UUID) -> Site:
     site = await db.scalar(select(Site).where(Site.id == site_id, Site.workspace_id == workspace_id))
     if not site:
@@ -311,7 +322,11 @@ async def generate_draft(db: AsyncSession, *, workspace_id: uuid.UUID, site_id: 
     draft.generation_mode = generation_mode
     draft.word_count = len(re.findall(r"\b[\w'-]+\b", body))
     is_new_version = previous_body != body or not draft.id
-    draft.version = max(1, draft.version + 1 if is_new_version and draft.id else draft.version)
+    draft.version = _next_draft_version(
+        draft.version,
+        is_new_version=is_new_version,
+        has_persisted_id=bool(draft.id),
+    )
     if is_new_version:
         db.add(ContentDraftVersion(draft=draft, version=draft.version, title=draft.title, meta_title=meta_title, meta_description=meta_description, body_markdown=body, generation_mode=generation_mode))
     draft.status = "draft"
@@ -358,7 +373,11 @@ async def update_draft(db: AsyncSession, *, workspace_id: uuid.UUID, site_id: uu
         raise ContentCreationError("Content draft not found", 404)
     if draft.status == "awaiting_approval":
         raise ContentCreationError("Withdraw the draft from approval before editing it", 409)
-    draft.version += 1
+    draft.version = _next_draft_version(
+        draft.version,
+        is_new_version=True,
+        has_persisted_id=True,
+    )
     draft.title = data.title.strip()
     draft.meta_title = data.meta_title.strip()
     draft.meta_description = data.meta_description.strip()

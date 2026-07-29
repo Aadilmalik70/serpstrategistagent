@@ -1,7 +1,11 @@
 import asyncio
 from types import SimpleNamespace
 
-from app.services.content_creation_service import _opportunity_payload, _serialize_internal_link_targets
+from app.services.content_creation_service import (
+    _next_draft_version,
+    _opportunity_payload,
+    _serialize_internal_link_targets,
+)
 
 
 def test_internal_link_targets_use_the_joined_page_path():
@@ -67,3 +71,10 @@ def test_opportunity_payload_uses_explicit_columns_for_expired_orm_rows():
 
     assert result[0]["updated_at"] == "2026-07-29T00:00:00+00:00"
     assert result[0]["target_path"] == "/guides/technical-seo"
+
+
+def test_null_draft_version_is_normalized_before_incrementing():
+    assert _next_draft_version(None, is_new_version=True, has_persisted_id=False) == 1
+    assert _next_draft_version(None, is_new_version=True, has_persisted_id=True) == 1
+    assert _next_draft_version(1, is_new_version=True, has_persisted_id=True) == 2
+    assert _next_draft_version(None, is_new_version=False, has_persisted_id=True) == 1
