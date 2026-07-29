@@ -191,7 +191,7 @@ class PageHtmlParser(HTMLParser):
         return len(re.findall(r"\b[\w'-]+\b", " ".join(self.visible_text)))
 
 
-async def _resolve_public_host(hostname: str, port: int) -> str:
+async def _resolve_public_host(hostname: str, port: int) -> list[str]:
     try:
         results = await asyncio.to_thread(
             socket.getaddrinfo,
@@ -202,16 +202,30 @@ async def _resolve_public_host(hostname: str, port: int) -> str:
         )
     except socket.gaierror as exc:
         raise CrawlError("Website hostname could not be resolved") from exc
-    addresses = {item[4][0] for item in results}
-    if not addresses:
-        raise CrawlError("Website hostname could not be resolved")
-    normalized: list[str] = []
-    for address in addresses:
+
+    addresses: dict[str, int] = {}
+    for item in results:
+        family = item[0]
+        address = item[4][0].split("%", 1)[0]
         parsed_address = ipaddress.ip_address(address)
         if not parsed_address.is_global:
             raise CrawlError("Private or reserved network targets are not allowed")
-        normalized.append(parsed_address.compressed)
-    return sorted(normalized)[0]
+        addresses[address] = family
+
+    if not addresses:
+        raise CrawlError("Website hostname could not be resolved")
+
+    family_order = {
+        socket.AF_INET: 0,
+        socket.AF_INET6: 1,
+    }
+    return [
+        address
+        for address, _family in sorted(
+            addresses.items(),
+            key=lambda item: (family_order.get(item[1], 2), item[0]),
+        )
+    ]
 
 
 async def _validate_public_target(url: str) -> str:
@@ -223,10 +237,8 @@ async def _validate_public_target(url: str) -> str:
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     if port not in {80, 443}:
         raise CrawlError("Crawler targets must use port 80 or 443")
-    return await _resolve_public_host(
-        parsed.hostname,
-        port,
-    )
+    addresses = await _resolve_public_host(parsed.hostname, port)
+    return addresses[0]
 
 
 def _pinned_target_url(url: str, address: str) -> tuple[str, str, str]:
@@ -323,47 +335,74 @@ async def _fetch_url(
     redirects: list[str] = []
     started = time.perf_counter()
     for _ in range(max_redirects + 1):
-        address = await _validate_public_target(current)
-        pinned_url, hostname, host_header = _pinned_target_url(current, address)
-        async with client.stream(
-            "GET",
-            pinned_url,
-            headers={"Host": host_header},
-            extensions={"sni_hostname": hostname},
-        ) as response:
-            if response.status_code in REDIRECT_STATUSES:
-                location = response.headers.get("location")
-                if not location:
-                    raise CrawlError("Website returned a redirect without a location")
-                next_url = _normalize_url(location, current, site_host)
-                if not next_url:
-                    raise CrawlError("Website redirected outside the configured site")
-                redirects.append(next_url)
-                current = next_url
-                continue
+        parsed_current = urlsplit(current)
+        if not parsed_current.hostname:
+            raise CrawlError("Crawler target hostname is missing")
+        port = parsed_current.port or (443 if parsed_current.scheme == "https" else 80)
+        addresses = await _resolve_public_host(parsed_current.hostname, port)
+        connection_errors: list[tuple[str, httpx.TransportError]] = []
 
-            body = bytearray()
-            truncated = False
-            async for chunk in response.aiter_bytes():
-                remaining = max_bytes - len(body)
-                if remaining <= 0:
-                    truncated = True
-                    break
-                body.extend(chunk[:remaining])
-                if len(chunk) > remaining:
-                    truncated = True
-                    break
-            elapsed = int((time.perf_counter() - started) * 1000)
-            return FetchResult(
-                requested_url=url,
-                final_url=current,
-                status_code=response.status_code,
-                headers={key.lower(): value for key, value in response.headers.items()},
-                body=bytes(body),
-                response_time_ms=elapsed,
-                redirect_chain=redirects,
-                truncated=truncated,
-            )
+        for address in addresses:
+            pinned_url, hostname, host_header = _pinned_target_url(current, address)
+            try:
+                async with client.stream(
+                    "GET",
+                    pinned_url,
+                    headers={"Host": host_header},
+                    extensions={"sni_hostname": hostname},
+                ) as response:
+                    if response.status_code in REDIRECT_STATUSES:
+                        location = response.headers.get("location")
+                        if not location:
+                            raise CrawlError("Website returned a redirect without a location")
+                        next_url = _normalize_url(location, current, site_host)
+                        if not next_url:
+                            raise CrawlError("Website redirected outside the configured site")
+                        redirects.append(next_url)
+                        current = next_url
+                        break
+
+                    body = bytearray()
+                    truncated = False
+                    async for chunk in response.aiter_bytes():
+                        remaining = max_bytes - len(body)
+                        if remaining <= 0:
+                            truncated = True
+                            break
+                        body.extend(chunk[:remaining])
+                        if len(chunk) > remaining:
+                            truncated = True
+                            break
+                    elapsed = int((time.perf_counter() - started) * 1000)
+                    return FetchResult(
+                        requested_url=url,
+                        final_url=current,
+                        status_code=response.status_code,
+                        headers={key.lower(): value for key, value in response.headers.items()},
+                        body=bytes(body),
+                        response_time_ms=elapsed,
+                        redirect_chain=redirects,
+                        truncated=truncated,
+                    )
+            except httpx.TransportError as exc:
+                connection_errors.append((address, exc))
+                logger.warning(
+                    "Crawler connection failed for %s via %s: %s",
+                    current,
+                    address,
+                    str(exc)[:300],
+                )
+                continue
+        else:
+            if connection_errors:
+                details = "; ".join(
+                    f"{address}: {type(exc).__name__}: {str(exc)[:200]}"
+                    for address, exc in connection_errors
+                )
+                raise CrawlError(
+                    f"Website connection failed for {parsed_current.hostname}. {details}"
+                ) from connection_errors[-1][1]
+            raise CrawlError("Website connection failed without a usable address")
     raise CrawlError("Website redirected too many times")
 
 
