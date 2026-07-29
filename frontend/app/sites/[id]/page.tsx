@@ -5,15 +5,16 @@ import { useSession } from "next-auth/react";
 import useSWR from "swr";
 
 import AgentChatPanel from "@/components/sites/agent-chat-panel";
-import ContentIntelligencePanel from "@/components/sites/content-intelligence-panel";
 import CitationIntelligencePanel from "@/components/sites/citation-intelligence-panel";
+import ContentIntelligencePanel from "@/components/sites/content-intelligence-panel";
 import EEATPanel from "@/components/sites/eeat-panel";
 import IntegrationsPanel from "@/components/sites/integrations-panel";
 import IssuesPanel from "@/components/sites/issues-panel";
 import LinksPanel from "@/components/sites/links-panel";
 import PagesTable from "@/components/sites/pages-table";
-import SiteHeader from "@/components/sites/site-header";
 import SearchPerformancePanel from "@/components/sites/search-performance-panel";
+import SerpContentPanel from "@/components/sites/serp-content-panel";
+import SiteHeader from "@/components/sites/site-header";
 import StatCards from "@/components/sites/stat-cards";
 import StatusCodesPanel from "@/components/sites/status-codes-panel";
 import VisualizationPanel from "@/components/sites/visualization-panel";
@@ -40,116 +41,48 @@ type SiteDetail = {
   librecrawl_enabled: boolean;
 };
 
-export default function SiteDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+type TabKey =
+  | "agent" | "pages" | "issues" | "eeat" | "links" | "status"
+  | "visualization" | "integrations" | "search" | "content" | "citation" | "serp-content";
+
+export default function SiteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: session } = useSession();
   const canUseApi = Boolean(session?.accessToken && session.workspaceId);
-  const { data: site, error, mutate } = useSWR<SiteDetail>(
-    canUseApi ? `/sites/${id}` : null,
-    (path: string) => apiFetch<SiteDetail>(path),
-  );
-  const [activeTab, setActiveTab] = useState<
-    | "agent"
-    | "pages"
-    | "issues"
-    | "eeat"
-    | "links"
-    | "status"
-    | "visualization"
-    | "integrations"
-    | "search"
-    | "content"
-    | "citation"
-  >("agent");
+  const { data: site, error, mutate } = useSWR<SiteDetail>(canUseApi ? `/sites/${id}` : null, (path: string) => apiFetch<SiteDetail>(path));
+  const [activeTab, setActiveTab] = useState<TabKey>("agent");
   const [issueKey, setIssueKey] = useState(0);
   const [pageKey, setPageKey] = useState(0);
 
-  if (!canUseApi) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-amber-700">A registered workspace account is required.</p>
-      </div>
-    );
-  }
+  if (!canUseApi) return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><p className="text-amber-700">A registered workspace account is required.</p></div>;
+  if (error) return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><p className="text-red-600">Site not found in this workspace</p></div>;
+  if (!site) return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><div className="h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" /></div>;
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-red-600">Site not found in this workspace</p>
-      </div>
-    );
-  }
+  function handleAgentComplete() { setIssueKey((key) => key + 1); setActiveTab("issues"); void mutate(); }
+  function handleCrawlComplete() { setPageKey((key) => key + 1); setActiveTab("pages"); void mutate(); }
 
-  if (!site) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  function handleAgentComplete() {
-    setIssueKey((key) => key + 1);
-    setActiveTab("issues");
-    void mutate();
-  }
-
-  function handleCrawlComplete() {
-    setPageKey((key) => key + 1);
-    setActiveTab("pages");
-    void mutate();
-  }
-
-  const tabs = [
-    { key: "agent", label: "💬 Agent" },
-    { key: "pages", label: "Pages" },
-    { key: "issues", label: "Technical Findings" },
-    { key: "search", label: "Search Opportunities" },
-    { key: "content", label: "Content Intelligence" },
-    { key: "citation", label: "AI Citations" },
-    { key: "eeat", label: "🎓 E-E-A-T" },
-    { key: "links", label: "🔗 Links" },
-    { key: "status", label: "Status Codes" },
-    { key: "visualization", label: "🗺️ Map" },
-    { key: "integrations", label: "Integrations" },
-  ] as const;
+  const tabs: Array<{ key: TabKey; label: string }> = [
+    { key: "agent", label: "💬 Agent" }, { key: "pages", label: "Pages" }, { key: "issues", label: "Technical Findings" },
+    { key: "search", label: "Search Opportunities" }, { key: "content", label: "Content Intelligence" }, { key: "serp-content", label: "✎ SERP Content" },
+    { key: "citation", label: "AI Citations" }, { key: "eeat", label: "🎓 E-E-A-T" }, { key: "links", label: "🔗 Links" },
+    { key: "status", label: "Status Codes" }, { key: "visualization", label: "🗺️ Map" }, { key: "integrations", label: "Integrations" },
+  ];
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <SiteHeader
-        site={site}
-        onAgentComplete={handleAgentComplete}
-        onCrawlComplete={handleCrawlComplete}
-      />
+      <SiteHeader site={site} onAgentComplete={handleAgentComplete} onCrawlComplete={handleCrawlComplete} />
       <main className="max-w-7xl mx-auto px-6 py-8">
         <StatCards site={site} />
         <div className="mt-8">
-          <div className="border-b border-gray-200 mb-6 overflow-x-auto">
-            <nav className="flex gap-6 min-w-max">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
-                  className={`pb-3 text-sm font-medium border-b-2 ${
-                    activeTab === tab.key
-                      ? "border-blue-600 text-blue-600"
-                      : "border-transparent text-gray-500 hover:text-gray-700"
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
-          </div>
+          <div className="border-b border-gray-200 mb-6 overflow-x-auto"><nav className="flex gap-6 min-w-max">
+            {tabs.map((tab) => <button type="button" key={tab.key} onClick={() => setActiveTab(tab.key)} className={`pb-3 text-sm font-medium border-b-2 ${activeTab === tab.key ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}>{tab.label}</button>)}
+          </nav></div>
           {activeTab === "agent" && <AgentChatPanel siteId={id} />}
           {activeTab === "pages" && <PagesTable key={pageKey} siteId={id} />}
           {activeTab === "issues" && <IssuesPanel key={issueKey} siteId={id} site={site} />}
           {activeTab === "search" && <SearchPerformancePanel siteId={id} />}
           {activeTab === "content" && <ContentIntelligencePanel siteId={id} />}
+          {activeTab === "serp-content" && <SerpContentPanel siteId={id} />}
           {activeTab === "citation" && <CitationIntelligencePanel siteId={id} />}
           {activeTab === "eeat" && <EEATPanel siteId={id} />}
           {activeTab === "links" && <LinksPanel siteId={id} />}

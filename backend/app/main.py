@@ -15,6 +15,7 @@ from app.routers import (
     billing,
     chat,
     citation_intelligence,
+    content_creation,
     content_intelligence,
     crawl,
     execution_jobs,
@@ -144,6 +145,7 @@ app.include_router(site_claims.router)
 app.include_router(sites.router)
 app.include_router(content_intelligence.router)
 app.include_router(citation_intelligence.router)
+app.include_router(content_creation.router)
 app.include_router(crawl.router)
 app.include_router(agent.router)
 app.include_router(operator_actions.router)
@@ -177,6 +179,7 @@ async def health():
         "javascript_rendering": "enabled" if settings.crawler_render_enabled else "disabled",
         "content_intelligence": "enabled",
         "citation_intelligence": "enabled",
+        "serp_content": "enabled",
     }
 
 
