@@ -1,6 +1,7 @@
+import asyncio
 from types import SimpleNamespace
 
-from app.services.content_creation_service import _opportunity_dicts, _serialize_internal_link_targets
+from app.services.content_creation_service import _opportunity_payload, _serialize_internal_link_targets
 
 
 def test_internal_link_targets_use_the_joined_page_path():
@@ -21,26 +22,48 @@ def test_internal_link_targets_use_the_joined_page_path():
     ]
 
 
-def test_opportunity_payload_is_materialized_from_orm_values():
-    opportunity = SimpleNamespace(
-        id="opportunity-id",
-        site_id="site-id",
-        page_id=None,
-        opportunity_type="refresh",
-        status="open",
-        title="Refresh the technical SEO guide",
-        summary="Search decay requires a refresh.",
-        target_query="technical SEO guide",
-        target_path="/guides/technical-seo",
-        priority_score=80,
-        confidence_score=75,
-        effort_score=45,
-        evidence=[{"signal": "content_intelligence"}],
-        created_at="2026-07-29T00:00:00+00:00",
-        updated_at="2026-07-29T00:00:00+00:00",
-    )
+class _ExpiredOpportunity:
+    id = "opportunity-id"
 
-    result = _opportunity_dicts([opportunity])
+    @property
+    def updated_at(self):
+        raise AssertionError("the expired ORM timestamp must not be accessed")
+
+
+class _ProjectionResult:
+    def mappings(self):
+        return self
+
+    def all(self):
+        return [{
+            "id": "opportunity-id",
+            "site_id": "site-id",
+            "page_id": None,
+            "opportunity_type": "refresh",
+            "status": "open",
+            "title": "Refresh the technical SEO guide",
+            "summary": "Search decay requires a refresh.",
+            "target_query": "technical SEO guide",
+            "target_path": "/guides/technical-seo",
+            "priority_score": 80,
+            "confidence_score": 75,
+            "effort_score": 45,
+            "evidence": [{"signal": "content_intelligence"}],
+            "created_at": "2026-07-29T00:00:00+00:00",
+            "updated_at": "2026-07-29T00:00:00+00:00",
+        }]
+
+
+class _ProjectionDB:
+    async def execute(self, statement):
+        del statement
+        return _ProjectionResult()
+
+
+def test_opportunity_payload_uses_explicit_columns_for_expired_orm_rows():
+    result = asyncio.run(
+        _opportunity_payload(_ProjectionDB(), [_ExpiredOpportunity()])
+    )
 
     assert result[0]["updated_at"] == "2026-07-29T00:00:00+00:00"
     assert result[0]["target_path"] == "/guides/technical-seo"
