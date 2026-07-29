@@ -67,6 +67,17 @@ def _opportunity_dict(item: ContentOpportunity) -> dict[str, Any]:
     }
 
 
+def _opportunity_dicts(items: list[ContentOpportunity]) -> list[dict[str, Any]]:
+    """Materialize ORM values before get_workspace commits its sync transaction.
+
+    This keeps response serialization independent of SQLAlchemy's
+    ``expire_on_commit`` setting.  Accessing an expired attribute from an
+    async endpoint would otherwise trigger an implicit lazy load and raise
+    outside the async greenlet.
+    """
+    return [_opportunity_dict(item) for item in items]
+
+
 async def sync_opportunities(db: AsyncSession, *, workspace_id: uuid.UUID, site_id: uuid.UUID) -> list[ContentOpportunity]:
     await _site(db, workspace_id, site_id)
     candidates: list[dict[str, Any]] = []
@@ -347,10 +358,11 @@ async def submit_for_approval(db: AsyncSession, *, workspace_id: uuid.UUID, user
 
 async def get_workspace(db: AsyncSession, *, workspace_id: uuid.UUID, site_id: uuid.UUID) -> dict[str, Any]:
     rows = await sync_opportunities(db, workspace_id=workspace_id, site_id=site_id)
+    opportunity_payload = _opportunity_dicts(rows)
     await db.commit()
     briefs = list((await db.execute(select(ContentBrief).where(ContentBrief.site_id == site_id, ContentBrief.workspace_id == workspace_id).order_by(desc(ContentBrief.updated_at)).limit(50))).scalars().all())
     drafts = list((await db.execute(select(ContentDraft).where(ContentDraft.site_id == site_id, ContentDraft.workspace_id == workspace_id).order_by(desc(ContentDraft.updated_at)).limit(50))).scalars().all())
-    return {"opportunities": [_opportunity_dict(row) for row in rows], "briefs": [_brief_dict(row) for row in briefs], "drafts": [_draft_dict(row) for row in drafts], "counts": {"opportunities": len(rows), "briefs": len(briefs), "drafts": len(drafts), "awaiting_approval": sum(1 for row in drafts if row.status == "awaiting_approval")}}
+    return {"opportunities": opportunity_payload, "briefs": [_brief_dict(row) for row in briefs], "drafts": [_draft_dict(row) for row in drafts], "counts": {"opportunities": len(opportunity_payload), "briefs": len(briefs), "drafts": len(drafts), "awaiting_approval": sum(1 for row in drafts if row.status == "awaiting_approval")}}
 
 
 async def list_briefs(db: AsyncSession, *, workspace_id: uuid.UUID, site_id: uuid.UUID) -> list[dict[str, Any]]:
