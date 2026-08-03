@@ -58,6 +58,13 @@ function scoreClass(score: number) {
   return "serp-content-score serp-content-score-low";
 }
 
+function opportunityLabel(type: string) {
+  if (type === "refresh_existing_page") return "Refresh existing page";
+  if (type === "new_page") return "New page candidate";
+  if (type === "technical_fix") return "Technical finding";
+  return type.replaceAll("_", " ");
+}
+
 export default function SerpContentPanel({ siteId }: { siteId: string }) {
   const { data, error, isLoading, mutate } = useSWR<Workspace>(`/sites/${siteId}/content`, (path: string) => apiFetch<Workspace>(path));
   const [selectedBrief, setSelectedBrief] = useState<string | null>(null);
@@ -73,6 +80,7 @@ export default function SerpContentPanel({ siteId }: { siteId: string }) {
   const brief = data.briefs.find((item) => item.id === selectedBrief) || data.briefs[0];
   const draft = data.drafts.find((item) => item.id === selectedDraft) || data.drafts[0];
   const editorValue = selectedDraft ? body : (draft?.body_markdown ?? body);
+  const contentOpportunities = data.opportunities.filter((item) => !["technical_fix", "excluded"].includes(item.opportunity_type));
 
   async function createBrief(opportunity: Opportunity) {
     setBusy(`brief:${opportunity.id}`);
@@ -151,15 +159,15 @@ export default function SerpContentPanel({ siteId }: { siteId: string }) {
       {message && <div className="serp-content-message">{message}</div>}
 
       <section className="serp-content-section">
-        <div className="section-heading-row"><div><h3 className="section-title">Content opportunities</h3><p className="section-subtitle">Prioritized from Content Intelligence, Search Console, and AI citation gaps.</p></div></div>
+        <div className="section-heading-row"><div><h3 className="section-title">Content opportunities</h3><p className="section-subtitle">Prioritized from existing-page evidence, verified content signals, and AI citation gaps. Indexing and canonical diagnostics are not content-creation tasks.</p></div></div>
         <div className="serp-content-opportunity-list">
-          {data.opportunities.slice(0, 8).map((opportunity) => (
+          {contentOpportunities.slice(0, 8).map((opportunity) => (
             <article className="serp-content-opportunity" key={opportunity.id}>
-              <div className="serp-content-opportunity-main"><div className="serp-content-type">{opportunity.opportunity_type.replaceAll("_", " ")}</div><h4>{opportunity.title}</h4><p>{opportunity.summary}</p>{opportunity.target_query && <code>{opportunity.target_query}</code>}</div>
+              <div className="serp-content-opportunity-main"><div className="serp-content-type">{opportunityLabel(opportunity.opportunity_type)}</div><h4>{opportunity.title}</h4><p>{opportunity.summary}</p>{opportunity.target_path && <code>{opportunity.target_path}</code>}{opportunity.target_query && <code>{opportunity.target_query}</code>}</div>
               <div className="serp-content-opportunity-side"><span className={scoreClass(opportunity.priority_score)}>P{opportunity.priority_score}</span><small>Confidence {opportunity.confidence_score}</small><button type="button" className="button button-secondary" onClick={() => void createBrief(opportunity)} disabled={busy !== null}>Create brief <span>→</span></button></div>
             </article>
           ))}
-          {!data.opportunities.length && <p className="panel-empty">Run Content Intelligence and Search Console sync first to populate evidence-backed opportunities.</p>}
+          {!contentOpportunities.length && <p className="panel-empty">No content opportunity is confirmed yet. Indexing, canonical, legal, and admin URLs are routed out of this workstream.</p>}
         </div>
       </section>
 

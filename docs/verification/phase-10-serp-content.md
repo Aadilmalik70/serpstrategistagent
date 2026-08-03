@@ -36,6 +36,10 @@ into briefs and reviewable drafts.
 2. Open a crawled site and select `Create → SERP Content`.
 3. Confirm opportunities are sourced from Content Intelligence, Search
    Console opportunities, and citation gaps when those records exist.
+   Search Console URLs with performance evidence must be labeled as refreshes
+   of existing pages, not new pages. Indexing/canonical diagnostics and
+   privacy, terms, cookies, admin, and other system paths must not appear in
+   this content-creation queue.
 4. Create a brief and verify its outline, information-gain requirements,
    internal-link targets, and evidence are visible.
 5. Generate an AI-assisted draft. If the gateway is unavailable, confirm the

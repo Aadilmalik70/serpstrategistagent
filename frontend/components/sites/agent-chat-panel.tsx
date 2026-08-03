@@ -87,33 +87,33 @@ export default function AgentChatPanel({ siteId }: { siteId: string }) {
   }
 
   return (
-    <div className="flex flex-col h-[600px] bg-white rounded-xl border border-gray-200 shadow-sm">
+    <div className="site-agent-panel flex flex-col h-[600px]">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+      <div className="site-agent-header flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-          <h3 className="text-sm font-semibold text-gray-900">SEO Agent</h3>
-          <span className="text-xs text-gray-500">Ready to help</span>
+          <div className="site-agent-status-dot w-2 h-2 rounded-full animate-pulse" />
+          <h3 className="text-sm font-semibold">SEO Agent</h3>
+          <span className="site-agent-subtitle text-xs">Ready to help</span>
         </div>
         <button
           onClick={clearChat}
-          className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+          className="site-agent-clear text-xs transition-colors"
         >
           Clear chat
         </button>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div className="site-agent-messages flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center">
-            <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-3">
-              <svg className="w-6 h-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="site-agent-empty-icon w-12 h-12 rounded-full flex items-center justify-center mb-3">
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
             </div>
-            <p className="text-sm font-medium text-gray-900 mb-1">SERP Strategist Agent</p>
-            <p className="text-xs text-gray-500 max-w-xs">
+            <p className="site-agent-empty-title text-sm font-medium mb-1">SERP Strategist Agent</p>
+            <p className="site-agent-empty-copy text-xs max-w-xs">
               Ask me to fix SEO issues, generate content, analyze your site, or create reports. I&apos;ll show you exactly what I&apos;ll change and why.
             </p>
             <div className="mt-4 flex flex-wrap gap-2 justify-center">
@@ -129,7 +129,7 @@ export default function AgentChatPanel({ siteId }: { siteId: string }) {
                     setInput(suggestion);
                     textareaRef.current?.focus();
                   }}
-                  className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full transition-colors"
+                  className="site-agent-suggestion text-xs px-3 py-1.5 rounded-full transition-colors"
                 >
                   {suggestion}
                 </button>
@@ -146,8 +146,8 @@ export default function AgentChatPanel({ siteId }: { siteId: string }) {
             <div
               className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
                 msg.role === "user"
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-100 text-gray-900"
+                  ? "bg-[#202020] text-white"
+                  : "site-agent-assistant-bubble"
               }`}
             >
               {msg.role === "assistant" ? (
@@ -163,7 +163,7 @@ export default function AgentChatPanel({ siteId }: { siteId: string }) {
 
         {loading && (
           <div className="flex justify-start">
-            <div className="bg-gray-100 rounded-2xl px-4 py-3">
+            <div className="site-agent-loading rounded-2xl px-4 py-3">
               <div className="flex gap-1">
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
                 <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
@@ -176,7 +176,7 @@ export default function AgentChatPanel({ siteId }: { siteId: string }) {
       </div>
 
       {/* Input */}
-      <div className="px-4 py-3 border-t border-gray-200">
+      <div className="site-agent-input-area px-4 py-3">
         <form onSubmit={sendMessage} className="flex gap-2">
           <textarea
             ref={textareaRef}
@@ -184,14 +184,14 @@ export default function AgentChatPanel({ siteId }: { siteId: string }) {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask the agent to fix issues, generate content, or analyze your site..."
-            className="flex-1 resize-none rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent max-h-32"
+            className="site-agent-textarea flex-1 resize-none rounded-xl px-4 py-2.5 text-sm max-h-32"
             rows={1}
             disabled={loading}
           />
           <button
             type="submit"
             disabled={!input.trim() || loading}
-            className="px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="site-agent-submit px-4 py-2.5 rounded-xl text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />

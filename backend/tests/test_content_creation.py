@@ -2,10 +2,81 @@ import asyncio
 from types import SimpleNamespace
 
 from app.services.content_creation_service import (
+    _classify_search_opportunity,
     _next_draft_version,
     _opportunity_payload,
     _serialize_internal_link_targets,
 )
+
+
+def _search_opportunity(**overrides):
+    values = {
+        "opportunity_type": "low_ctr",
+        "page_url": "https://example.com/blog/seo-guide?utm_source=gsc",
+        "metrics": {},
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_search_opportunity_with_existing_url_is_refresh_not_new_page():
+    page = SimpleNamespace(id="page-id", path="/blog/seo-guide")
+
+    result = _classify_search_opportunity(
+        _search_opportunity(),
+        site_domain="example.com",
+        pages_by_path={"/blog/seo-guide": page},
+    )
+
+    assert result["type"] == "refresh_existing_page"
+    assert result["page_id"] == "page-id"
+    assert result["path"] == "/blog/seo-guide"
+
+
+def test_search_url_is_refresh_even_before_the_page_is_crawled():
+    result = _classify_search_opportunity(
+        _search_opportunity(),
+        site_domain="example.com",
+        pages_by_path={},
+    )
+
+    assert result["type"] == "refresh_existing_page"
+    assert result["page_id"] is None
+
+
+def test_indexing_diagnostic_is_technical_and_not_content_creation():
+    result = _classify_search_opportunity(
+        _search_opportunity(
+            opportunity_type="not_indexed",
+            page_url="https://example.com/blog/seo-guide",
+        ),
+        site_domain="example.com",
+        pages_by_path={},
+    )
+
+    assert result["type"] == "technical_fix"
+    assert result["path"] == "/blog/seo-guide"
+
+
+def test_legal_and_admin_paths_are_excluded_from_content_opportunities():
+    for path in ("/privacy", "/terms-of-service", "/cookies", "/admin/blog"):
+        result = _classify_search_opportunity(
+            _search_opportunity(page_url=f"https://example.com{path}"),
+            site_domain="example.com",
+            pages_by_path={path: SimpleNamespace(id="system-page", path=path)},
+        )
+
+        assert result["type"] == "excluded"
+
+
+def test_search_opportunity_without_target_url_can_be_a_new_page():
+    result = _classify_search_opportunity(
+        _search_opportunity(page_url=None, metrics={}),
+        site_domain="example.com",
+        pages_by_path={},
+    )
+
+    assert result["type"] == "new_page"
 
 
 def test_internal_link_targets_use_the_joined_page_path():

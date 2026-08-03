@@ -73,7 +73,7 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
           if (stopped) return;
           crawl = await apiFetch<CrawlStatus>(`/crawl/${jobId}`);
           setLastCrawlStatus(crawl.status);
-        setRetryableFailedPages(crawl.retryable_failed_pages || 0);
+          setRetryableFailedPages(crawl.retryable_failed_pages || 0);
           if (!TERMINAL_CRAWL_STATES.has(crawl.status)) continue;
           setRunningCrawl(false);
           if (crawl.status === "completed" && crawl.pages_crawled > 0) {
@@ -189,6 +189,7 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
         method: "POST",
       });
       setLastCrawlStatus(crawl.status);
+      setRetryableFailedPages(crawl.retryable_failed_pages || 0);
       await waitForCrawl(crawl.job_id);
     } catch (error) {
       setStatusError(true);
@@ -199,7 +200,6 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
       setRunningCrawl(false);
     }
   }
-
 
   async function retryFailedPages() {
     if (!currentCrawlJobId || runningCrawl || runningAgent || retryableFailedPages < 1) return;
@@ -278,33 +278,34 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
   }
 
   return (
-    <header className="border-b border-gray-200 bg-white px-4 py-4 sm:px-6">
-      <div className="mx-auto flex max-w-7xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-4">
-          <Link href="/" className="text-sm text-gray-500 hover:text-gray-700">
-            ← Back
-          </Link>
-          <div>
-            <h1 className="text-xl font-bold">{site.name}</h1>
-            <p className="text-sm text-gray-500">{site.domain}</p>
+    <header className="site-header">
+      <div className="site-header-inner">
+        <div className="site-header-brand">
+          <Link href="/" className="site-back-link"><span aria-hidden="true">←</span> Sites</Link>
+          <span className="site-header-divider" aria-hidden="true" />
+          <div className="site-mark" aria-hidden="true">{site.name.slice(0, 1).toUpperCase()}</div>
+          <div className="min-w-0">
+            <p className="site-kicker">SITE WORKSPACE</p>
+            <h1 className="site-header-title">{site.name}</h1>
+            <p className="site-header-domain"><span className="site-ready-dot" />{site.domain}</p>
           </div>
         </div>
 
-        <div className="flex flex-col items-stretch gap-2 sm:items-end">
-          <div className="flex flex-wrap gap-2 sm:justify-end">
+        <div className="site-header-controls">
+          <div className="site-header-actions">
             <button
               type="button"
               onClick={() => void startCrawl()}
               disabled={runningCrawl || runningAgent}
-              className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="button button-secondary"
             >
-              {runningCrawl ? "Crawling…" : site.page_count > 0 ? "Recrawl Site" : "Crawl Site"}
+              <span aria-hidden="true">↻</span>{runningCrawl ? "Crawling…" : site.page_count > 0 ? "Recrawl site" : "Crawl site"}
             </button>
             {runningCrawl && currentCrawlJobId ? (
               <button
                 type="button"
                 onClick={() => void cancelCrawl()}
-                className="rounded-md border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+                className="button button-danger"
               >
                 Cancel Crawl
               </button>
@@ -314,7 +315,7 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
                 type="button"
                 onClick={() => void resumeCrawl()}
                 disabled={runningAgent}
-                className="rounded-md border border-blue-200 bg-white px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                className="button button-secondary button-blue"
               >
                 Resume Crawl
               </button>
@@ -324,7 +325,7 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
                 type="button"
                 onClick={() => void retryFailedPages()}
                 disabled={runningAgent}
-                className="rounded-md border border-amber-200 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+                className="button button-secondary"
               >
                 Retry {retryableFailedPages} failed page{retryableFailedPages === 1 ? "" : "s"}
               </button>
@@ -333,13 +334,13 @@ export default function SiteHeader({ site, onAgentComplete, onCrawlComplete }: S
               type="button"
               onClick={handleRunAgent}
               disabled={runningAgent || runningCrawl}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+              className="button button-primary"
             >
-              {runningAgent ? "Working…" : "Run Agent"}
+              <span aria-hidden="true">✦</span>{runningAgent ? "Working…" : "Run agent"}
             </button>
           </div>
           {statusMessage && (
-            <p className={`max-w-md text-xs ${statusError ? "text-red-600" : "text-gray-500"}`}>
+            <p className={`site-status-message ${statusError ? "site-status-error" : ""}`}>
               {statusMessage}
             </p>
           )}

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import re
 from typing import Any, Mapping
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 import uuid
 
 from sqlalchemy import desc, select
@@ -36,6 +36,33 @@ def _next_draft_version(
     """Return a valid draft version even for legacy rows with a NULL version."""
     current = current_version or 0
     return max(1, current + 1 if is_new_version and has_persisted_id else current)
+
+
+TECHNICAL_SEARCH_OPPORTUNITY_TYPES = frozenset({
+    "indexation_blocked",
+    "not_indexed",
+    "canonical_mismatch",
+})
+
+EXCLUDED_PATHS = frozenset({
+    "/privacy",
+    "/privacy-policy",
+    "/terms",
+    "/terms-of-service",
+    "/cookies",
+    "/cookie-policy",
+})
+
+EXCLUDED_PATH_PREFIXES = (
+    "/admin",
+    "/api",
+    "/auth",
+    "/login",
+    "/logout",
+    "/register",
+    "/signup",
+    "/_next",
+)
 
 
 async def _site(db: AsyncSession, workspace_id: uuid.UUID, site_id: uuid.UUID) -> Site:
@@ -130,14 +157,88 @@ async def _opportunity_payload(
     return [payload_by_id[item_id] for item_id in opportunity_ids if item_id in payload_by_id]
 
 
+def _normalized_path(site_domain: str, value: object) -> str | None:
+    """Return a same-site URL/path in the form used by ``Page.path``."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    site_host = urlsplit(
+        site_domain if "://" in site_domain else f"https://{site_domain}"
+    ).hostname
+    parsed = urlsplit(
+        raw if "://" in raw else f"https://{site_domain.rstrip('/')}/{raw.lstrip('/')}"
+    )
+    if not parsed.path and not parsed.netloc:
+        return None
+    if parsed.hostname and site_host and parsed.hostname.casefold().removeprefix("www.") != site_host.casefold().removeprefix("www."):
+        return None
+    path = unquote(parsed.path or "/")
+    if not path.startswith("/"):
+        path = f"/{path}"
+    if path != "/":
+        path = path.rstrip("/")
+    return path or "/"
+
+
+def _excluded_path(path: str | None) -> bool:
+    if not path:
+        return False
+    normalized = path.casefold().rstrip("/") or "/"
+    return normalized in EXCLUDED_PATHS or any(
+        normalized == prefix or normalized.startswith(f"{prefix}/")
+        for prefix in EXCLUDED_PATH_PREFIXES
+    )
+
+
+def _search_target_path(row: SearchOpportunity, *, site_domain: str) -> str | None:
+    direct_path = _normalized_path(site_domain, row.page_url)
+    if direct_path:
+        return direct_path
+    metrics = row.metrics if isinstance(row.metrics, dict) else {}
+    for item in metrics.get("pages", []):
+        if isinstance(item, dict):
+            path = _normalized_path(site_domain, item.get("page_url") or item.get("url"))
+        else:
+            path = _normalized_path(site_domain, item)
+        if path:
+            return path
+    return None
+
+
+def _classify_search_opportunity(
+    row: SearchOpportunity,
+    *,
+    site_domain: str,
+    pages_by_path: dict[str, Page],
+) -> dict[str, Any]:
+    """Classify heterogeneous Search Console records for the content workspace."""
+    path = _search_target_path(row, site_domain=site_domain)
+    if _excluded_path(path):
+        classification = "excluded"
+    elif row.opportunity_type in TECHNICAL_SEARCH_OPPORTUNITY_TYPES:
+        classification = "technical_fix"
+    elif path:
+        classification = "refresh_existing_page"
+    else:
+        classification = "new_page"
+    page = pages_by_path.get(path) if path else None
+    return {"type": classification, "path": path, "page_id": page.id if page else None}
+
+
 async def sync_opportunities(db: AsyncSession, *, workspace_id: uuid.UUID, site_id: uuid.UUID) -> list[ContentOpportunity]:
-    await _site(db, workspace_id, site_id)
+    site = await _site(db, workspace_id, site_id)
+    pages = list((await db.execute(select(Page).where(Page.site_id == site_id))).scalars().all())
+    pages_by_path = {
+        path: page
+        for page in pages
+        if (path := _normalized_path(site.domain, page.path))
+    }
     candidates: list[dict[str, Any]] = []
     insights = list((await db.execute(select(ContentInsight, Page).join(Page, Page.id == ContentInsight.page_id).where(ContentInsight.site_id == site_id).order_by(desc(ContentInsight.decay_score)))).all())
     for insight, page in insights:
         if insight.decay_score >= 25:
             candidates.append({
-                "key": f"refresh:{page.id}", "type": "refresh", "page_id": page.id,
+                "key": f"refresh:{page.id}", "type": "refresh_existing_page", "page_id": page.id,
                 "title": f"Refresh {page.title or page.path}",
                 "summary": "Search decay and freshness signals indicate that this page should be refreshed before it loses more visibility.",
                 "query": None, "path": page.path,
@@ -146,12 +247,34 @@ async def sync_opportunities(db: AsyncSession, *, workspace_id: uuid.UUID, site_
             })
     search_rows = list((await db.execute(select(SearchOpportunity).where(SearchOpportunity.site_id == site_id, SearchOpportunity.status == "active").order_by(desc(SearchOpportunity.priority_score)).limit(50))).scalars().all())
     for row in search_rows:
+        classification = _classify_search_opportunity(
+            row,
+            site_domain=site.domain,
+            pages_by_path=pages_by_path,
+        )
+        key = f"search:{row.opportunity_key}"
+        if classification["type"] in {"technical_fix", "excluded"}:
+            suppressed = await db.scalar(
+                select(ContentOpportunity).where(
+                    ContentOpportunity.site_id == site_id,
+                    ContentOpportunity.opportunity_key == key,
+                )
+            )
+            if suppressed:
+                suppressed.opportunity_type = classification["type"]
+                suppressed.status = classification["type"]
+            continue
+        is_existing_page = classification["type"] == "refresh_existing_page"
         candidates.append({
-            "key": f"search:{row.opportunity_key}", "type": "new_page", "page_id": None,
-            "title": row.title or f"Create content for {row.query or 'search opportunity'}",
-            "summary": "A Search Console opportunity can be converted into a focused page brief with measurable intent and evidence.",
-            "query": row.query, "path": row.page_url, "priority": row.priority_score, "confidence": row.confidence_score, "effort": 55,
-            "evidence": [{"signal": "search_opportunity", "query": row.query, "page_url": row.page_url, "metrics": row.metrics or {}, "source_evidence": row.evidence or []}],
+            "key": key, "type": classification["type"], "page_id": classification["page_id"],
+            "title": row.title or (f"Refresh {classification['path']}" if is_existing_page else f"Create content for {row.query or 'search opportunity'}"),
+            "summary": (
+                "Search Console shows measurable performance evidence for this existing URL. Refresh the page against the query and the observed opportunity."
+                if is_existing_page
+                else "No target URL is attached to this search signal, so it may justify a new page only after confirming that no suitable existing page covers the intent."
+            ),
+            "query": row.query, "path": classification["path"], "priority": row.priority_score, "confidence": row.confidence_score, "effort": 55,
+            "evidence": [{"signal": "search_opportunity", "classification": classification["type"], "source_type": row.opportunity_type, "query": row.query, "page_url": row.page_url, "target_path": classification["path"], "metrics": row.metrics or {}, "source_evidence": row.evidence or []}],
         })
     gaps = list((await db.execute(select(CitationGap).where(CitationGap.site_id == site_id, CitationGap.status == "active").order_by(desc(CitationGap.priority_score)).limit(25))).scalars().all())
     for gap in gaps:
@@ -215,6 +338,11 @@ async def create_brief(db: AsyncSession, *, workspace_id: uuid.UUID, site_id: uu
         opportunity = await db.scalar(select(ContentOpportunity).where(ContentOpportunity.id == data.opportunity_id, ContentOpportunity.site_id == site_id, ContentOpportunity.workspace_id == workspace_id))
         if not opportunity:
             raise ContentCreationError("Content opportunity not found", 404)
+        if opportunity.opportunity_type in {"technical_fix", "excluded"} or opportunity.status in {"technical_fix", "excluded"}:
+            raise ContentCreationError(
+                "This record belongs to Technical Findings or an excluded system page, not content creation",
+                409,
+            )
     page = None
     if data.page_id:
         page = await db.scalar(select(Page).where(Page.id == data.page_id, Page.site_id == site_id))
