@@ -226,8 +226,6 @@ async def resume_crawl(
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return await _crawl_status_payload(db, job)
 
- 
- 
 @router.post("/{job_id}/retry-failed", status_code=202)
 async def retry_failed_pages(
     job_id: uuid.UUID,

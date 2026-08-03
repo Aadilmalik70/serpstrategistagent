@@ -4,6 +4,7 @@ import { use, useState } from "react";
 import { useSession } from "next-auth/react";
 import useSWR from "swr";
 
+import OperatorHeader from "@/components/dashboard/operator-header";
 import AgentChatPanel from "@/components/sites/agent-chat-panel";
 import CitationIntelligencePanel from "@/components/sites/citation-intelligence-panel";
 import ContentIntelligencePanel from "@/components/sites/content-intelligence-panel";
@@ -54,9 +55,9 @@ export default function SiteDetailPage({ params }: { params: Promise<{ id: strin
   const [issueKey, setIssueKey] = useState(0);
   const [pageKey, setPageKey] = useState(0);
 
-  if (!canUseApi) return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><p className="text-amber-700">A registered workspace account is required.</p></div>;
-  if (error) return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><p className="text-red-600">Site not found in this workspace</p></div>;
-  if (!site) return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><div className="h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" /></div>;
+  if (!canUseApi) return <div className="site-detail-page flex min-h-screen items-center justify-center"><p className="site-route-message">A registered workspace account is required.</p></div>;
+  if (error) return <div className="site-detail-page flex min-h-screen items-center justify-center"><p className="site-route-message site-route-error">Site not found in this workspace</p></div>;
+  if (!site) return <div className="site-detail-page flex min-h-screen items-center justify-center"><div className="site-route-loader h-8 w-8 animate-spin rounded-full" /></div>;
 
   function handleAgentComplete() { setIssueKey((key) => key + 1); setActiveTab("issues"); void mutate(); }
   function handleCrawlComplete() { setPageKey((key) => key + 1); setActiveTab("pages"); void mutate(); }
@@ -69,13 +70,14 @@ export default function SiteDetailPage({ params }: { params: Promise<{ id: strin
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="site-detail-page min-h-screen">
+      <OperatorHeader />
       <SiteHeader site={site} onAgentComplete={handleAgentComplete} onCrawlComplete={handleCrawlComplete} />
-      <main className="max-w-7xl mx-auto px-6 py-8">
+      <main className="site-detail-main">
         <StatCards site={site} />
         <div className="mt-8">
-          <div className="border-b border-gray-200 mb-6 overflow-x-auto"><nav className="flex gap-6 min-w-max">
-            {tabs.map((tab) => <button type="button" key={tab.key} onClick={() => setActiveTab(tab.key)} className={`pb-3 text-sm font-medium border-b-2 ${activeTab === tab.key ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}>{tab.label}</button>)}
+          <div className="site-tab-shell overflow-x-auto"><nav className="site-tab-list min-w-max">
+            {tabs.map((tab) => <button type="button" key={tab.key} onClick={() => setActiveTab(tab.key)} className={`site-tab ${activeTab === tab.key ? "is-active" : ""}`}>{tab.label}</button>)}
           </nav></div>
           {activeTab === "agent" && <AgentChatPanel siteId={id} />}
           {activeTab === "pages" && <PagesTable key={pageKey} siteId={id} />}
