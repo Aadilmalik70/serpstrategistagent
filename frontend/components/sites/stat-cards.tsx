@@ -27,48 +27,39 @@ const gradeColors: Record<string, string> = {
 
 export default function StatCards({ site }: StatCardsProps) {
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-      <div className="rounded-lg border border-gray-200 bg-white p-5">
-        <p className="text-sm text-gray-500">Health Score</p>
+    <div className="site-stat-strip">
+      <div className="site-stat-card site-stat-card-featured">
+        <div className="site-stat-heading"><p>Health score</p><span className="stat-status">Live</span></div>
         {site.health_score !== null ? (
-          <div className="mt-1 flex items-baseline gap-2">
-            <p className={`text-2xl font-bold ${gradeColors[site.health_grade || "F"] || "text-gray-900"}`}>
+          <div className="stat-value-row">
+            <p className={`stat-value ${gradeColors[site.health_grade || "F"] || "text-gray-900"}`}>
               {site.health_score}/100
             </p>
-            <span className={`text-lg font-semibold ${gradeColors[site.health_grade || "F"] || "text-gray-500"}`}>
-              ({site.health_grade})
-            </span>
+            <span className="stat-grade">{site.health_grade}</span>
           </div>
         ) : (
-          <div className="mt-1">
-            <p className="text-2xl font-bold text-gray-400">—</p>
-            <p className="mt-1 text-xs text-gray-400">Available after crawl and analysis</p>
+          <div className="stat-value-row">
+            <p className="stat-value stat-value-muted">—</p>
+            <span className="stat-context">Awaiting analysis</span>
           </div>
         )}
       </div>
-      <div className="rounded-lg border border-gray-200 bg-white p-5">
-        <p className="text-sm text-gray-500">Pages Discovered</p>
-        <p className="mt-1 text-2xl font-bold">{site.page_count}</p>
+      <div className="site-stat-card">
+        <div className="site-stat-heading"><p>Pages discovered</p><span className="stat-icon">▤</span></div>
+        <p className="stat-value">{site.page_count}</p>
+        <p className="stat-context">From latest crawl</p>
       </div>
-      <div className="rounded-lg border border-gray-200 bg-white p-5">
-        <p className="text-sm text-gray-500">Issues Found</p>
-        <p className="mt-1 text-2xl font-bold">
+      <div className="site-stat-card">
+        <div className="site-stat-heading"><p>Open findings</p><span className="stat-icon stat-icon-alert">!</span></div>
+        <p className="stat-value">
           {site.issue_count || site.latest_run?.issues_found || "—"}
         </p>
+        <p className="stat-context">Technical and content signals</p>
       </div>
-      <div className="rounded-lg border border-gray-200 bg-white p-5">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-sm text-gray-500">Status</p>
-          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
-            First-party crawler
-          </span>
-        </div>
-        <p className="mt-1 text-2xl font-bold capitalize">{site.status.replaceAll("_", " ")}</p>
-        {site.latest_run?.completed_at && (
-          <p className="mt-1 text-xs text-gray-400">
-            Last analysis: {new Date(site.latest_run.completed_at).toLocaleString()}
-          </p>
-        )}
+      <div className="site-stat-card">
+        <div className="site-stat-heading"><p>Workspace status</p><span className="stat-status stat-status-green">● Ready</span></div>
+        <p className="stat-value stat-value-status">{site.status.replaceAll("_", " ")}</p>
+        <p className="stat-context">{site.latest_run?.completed_at ? `Last run ${new Date(site.latest_run.completed_at).toLocaleDateString()}` : "Ready for first run"}</p>
       </div>
     </div>
   );
